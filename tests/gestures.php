@@ -323,6 +323,43 @@ foreach (['README.md' => 'readme', 'README.fr.md' => 'readme_fr'] as $readmeFile
     });
 }
 
+// What the gestures (or the Flex recipe of the pack) must have produced: bin/apply-gestures --verify-applied
+
+$test('bin/apply-gestures --verify-applied passes on a project where the gestures were applied', static function () use ($apply, $gesturesFile, &$temporaryDirectories): array {
+    $project = project($temporaryDirectories);
+    run($apply, ['--project=' . $project, '--gestures=' . $gesturesFile]);
+    [$code, , $errors] = run($apply, ['--verify-applied', '--project=' . $project, '--gestures=' . $gesturesFile]);
+
+    return [0 === $code, $errors];
+});
+
+$test('bin/apply-gestures --verify-applied fails and names the plugin when a bundle is not registered', static function () use ($apply, $gesturesFile, $first, &$temporaryDirectories): array {
+    $project = project($temporaryDirectories);
+    run($apply, ['--project=' . $project, '--gestures=' . $gesturesFile]);
+    file_put_contents($project . '/config/bundles.php', "<?php\n\nreturn [\n];\n");
+    [$code, , $errors] = run($apply, ['--verify-applied', '--project=' . $project, '--gestures=' . $gesturesFile]);
+
+    return [1 === $code && str_contains($errors, 'FAIL plugin=' . $first['plugin'] . ' step=bundles'), $errors];
+});
+
+$test('bin/apply-gestures --verify-applied fails and names the plugin when a configuration file is missing', static function () use ($apply, $gesturesFile, $first, &$temporaryDirectories): array {
+    $project = project($temporaryDirectories);
+    run($apply, ['--project=' . $project, '--gestures=' . $gesturesFile]);
+    unlink($project . '/config/packages/' . $first['configuration'][0]['file'] . '.yaml');
+    [$code, , $errors] = run($apply, ['--verify-applied', '--project=' . $project, '--gestures=' . $gesturesFile]);
+
+    return [1 === $code && str_contains($errors, 'FAIL plugin=' . $first['plugin'] . ' step=configuration'), $errors];
+});
+
+$test('bin/apply-gestures --verify-applied fails and names the plugin when a routes file is missing', static function () use ($apply, $gesturesFile, $first, &$temporaryDirectories): array {
+    $project = project($temporaryDirectories);
+    run($apply, ['--project=' . $project, '--gestures=' . $gesturesFile]);
+    unlink($project . '/config/routes/' . $first['routes'][0]['file'] . '.yaml');
+    [$code, , $errors] = run($apply, ['--verify-applied', '--project=' . $project, '--gestures=' . $gesturesFile]);
+
+    return [1 === $code && str_contains($errors, 'FAIL plugin=' . $first['plugin'] . ' step=routes'), $errors];
+});
+
 // bin/step
 
 $test('a command that succeeds passes through with its output and exit code 0', static function () use ($step): array {
