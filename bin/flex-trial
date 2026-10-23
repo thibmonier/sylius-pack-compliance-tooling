@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# Replays the Symfony Flex trial of the recipe in a throwaway project (a Symfony skeleton with Flex, no Sylius, no plugin):
+#   1. the recipe is served by a local endpoint (bin/build-recipe-endpoint + php -S);
+#   2. a stand-in metapackage with the name of the pack (type metapackage, one dummy member) is required: the recipe must be
+#      applied (bundles registered, configuration and routes files written);
+#   3. composer remove: what the recipe added must be removed;
+#   4. a file written by the application before the install must not be overwritten.
+# Needs php, composer and network access (skeleton and default recipes). Prints PASS or FAIL per check, exit code 1 on failure.
+#
+#   bin/flex-trial [WORK_DIR]        # FLEX_TRIAL_PORT=8765, FLEX_TRIAL_KEEP=1 keeps the directory
+
+set -euo pipefail
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+port=${FLEX_TRIAL_PORT:-8765}
+work=${1:-$(mktemp -d)}
+mkdir -p "$work"
+pack=$(php -r 'echo json_decode(file_get_contents($argv[1]), true)["pack"];' "$root/etc/gestures.json")
+failures=0
+server_pid=''
+
+cleanup() {
+    [ -n "$server_pid" ] && kill "$server_pid" 2>/dev/null || true
+    [ "${FLEX_TRIAL_KEEP:-0}" = 1 ] || rm -rf "$work"
+}
+trap cleanup EXIT
+
+check() {
+    if eval "$2"; then echo "PASS $1"; else echo "FAIL $1"; failures=$((failures + 1)); fi
+}
+
+mkdir -p "$work/member/src" "$work/pack" "$work/server"
+cat > "$work/member/composer.json" <<JSON
+{"name": "tmonier/trial-member", "type": "library", "version": "1.0.0"}
+JSON
+cat > "$work/pack/composer.json" <<JSON
+{"name": "$pack", "type": "metapackage", "version": "1.0.0", "require": {"tmonier/trial-member": "^1.0"}}
+JSON
+
+php "$root/bin/build-recipe-endpoint" --root="$root" --out="$work/server" --url="http://127.0.0.1:$port"
+php -S "127.0.0.1:$port" -t "$work/server" > "$work/server.log" 2>&1 &
+server_pid=$!
+
+composer create-project symfony/skeleton:"7.4.*" "$work/project" --no-interaction --no-scripts --quiet
+cd "$work/project"
+composer config repositories.member --json '{"type": "path", "url": "../member", "options": {"symlink": false}}'
+composer config repositories.pack --json '{"type": "path", "url": "../pack", "options": {"symlink": false}}'
+composer config secure-http false
+composer config extra.symfony.allow-contrib true --json
+composer config extra.symfony.endpoint --json "[\"http://127.0.0.1:$port/index.json\", \"flex://defaults\"]"
+
+recipe=$(ls -d "$root/recipe/$pack"/*/)
+bundles=$(php -r '$m = json_decode(file_get_contents($argv[1]), true); echo implode("\n", array_keys($m["bundles"]));' "$recipe/manifest.json")
+files=$(cd "$recipe" && find config -type f | sort)
+
+echo "--- install"
+composer require "$pack:^1.0" --no-scripts --no-interaction 2>&1 | grep -E "Symfony operations|Configuring $pack" || true
+all_bundles() { while IFS= read -r bundle; do grep -qF "$bundle::class" config/bundles.php || return 1; done <<< "$bundles"; }
+all_files() { while IFS= read -r file; do cmp -s "$recipe/$file" "$file" || return 1; done <<< "$files"; }
+check "the bundles of the recipe are registered in config/bundles.php" all_bundles
+check "the configuration and routes files of the recipe are written, identical to the recipe" all_files
+
+echo "--- remove"
+composer remove "$pack" --no-scripts --no-interaction 2>&1 | grep -E "Unconfiguring $pack" || true
+no_bundles() { while IFS= read -r bundle; do ! grep -qF "$bundle::class" config/bundles.php || return 1; done <<< "$bundles"; }
+no_files() { while IFS= read -r file; do [ ! -e "$file" ] || return 1; done <<< "$files"; }
+check "composer remove unregisters the bundles" no_bundles
+check "composer remove removes the files that the recipe added" no_files
+check "composer remove keeps the other bundles of the application" "grep -qF 'FrameworkBundle::class' config/bundles.php"
+
+echo "--- a file already in the application"
+mine=$(echo "$files" | head -n 1)
+mkdir -p "$(dirname "$mine")"
+printf '# written by the application\n' > "$mine"
+composer require "$pack:^1.0" --no-scripts --no-interaction 2>&1 | grep -E "Configuring $pack" || true
+check "the file written by the application is not overwritten" "[ \"\$(cat '$mine')\" = '# written by the application' ]"
+others_written() { for file in $(echo "$files" | tail -n +2); do cmp -s "$recipe/$file" "$file" || return 1; done; }
+check "the other files of the recipe are written" others_written
+composer remove "$pack" --no-scripts --no-interaction > /dev/null 2>&1 || true
+if [ -e "$mine" ]; then
+    echo "NOTE $mine kept by composer remove"
+else
+    echo "NOTE limit of Flex: $mine, written by the application before the install, was removed by composer remove (Flex records it in symfony.lock)"
+fi
+
+echo "$failures check(s) failed"
+[ "$failures" -eq 0 ]
