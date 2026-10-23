@@ -44,8 +44,28 @@ jobs:
             - name: Check the gestures against both READMEs
               run: bin/check-gestures
 
+            - name: Test the Flex recipe and its endpoint
+              run: php tests/recipe.php
+
+            - name: Check the Flex recipe against the gestures
+              run: bin/check-recipe
+
             - name: Check that every action is pinned
               run: bin/check-pinned-refs
+
+    flex-trial:
+        runs-on: ubuntu-latest
+        name: "Flex trial in a throwaway project"
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+            - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2.40.0
+              with:
+                  php-version: "8.4"
+                  tools: composer:v2
+
+            - name: Install, remove and keep a file of the application, with the recipe served locally
+              run: bin/flex-trial
 
     resolve:
         runs-on: ubuntu-latest
@@ -154,6 +174,125 @@ jobs:
               run: |
                   cd "$RUNNER_TEMP/project"
                   php "$GITHUB_WORKSPACE/pack/bin/apply-gestures" --project=. --gestures="$GITHUB_WORKSPACE/pack/etc/gestures.json"
+
+            - name: Create the database and run the migrations
+              run: |
+                  cd "$RUNNER_TEMP/project"
+                  STEP="$GITHUB_WORKSPACE/pack/bin/step"
+                  "$STEP" --plugin=auto --step=database-create -- bin/console doctrine:database:create --if-not-exists
+                  "$STEP" --plugin=auto --step=migrations -- bin/console doctrine:migrations:migrate --no-interaction
+
+            - name: Check that the migrations created tables of the pack
+              run: |
+                  count=$(mysql -uroot -proot -N -e "SHOW TABLES FROM sylius LIKE 'tmonier%'" | wc -l)
+                  echo "$count tables of the pack"
+                  test "$count" -gt 0
+
+            - name: Lint the container
+              run: |
+                  cd "$RUNNER_TEMP/project"
+                  "$GITHUB_WORKSPACE/pack/bin/step" --plugin=auto --step=lint-container -- bin/console lint:container
+
+            - name: Compile the routes
+              run: |
+                  cd "$RUNNER_TEMP/project"
+                  "$GITHUB_WORKSPACE/pack/bin/step" --plugin=auto --step=debug-router -- bin/console debug:router --no-interaction --format=json > "$RUNNER_TEMP/routes.json"
+
+            - name: Validate the Doctrine mapping and the schema of the pack
+              run: |
+                  cd "$RUNNER_TEMP/project"
+                  STEP="$GITHUB_WORKSPACE/pack/bin/step"
+                  "$STEP" --plugin=auto --step=schema-validate -- bin/console doctrine:schema:validate --skip-sync
+                  # The blank Sylius-Standard schema is itself out of sync (tables of the Mollie, refund and messenger
+                  # bundles), so the synchronisation is checked on the tables of the pack and of the Invoicing Plugin.
+                  "$STEP" --plugin=auto --step=schema-sync -- bash -c '
+                      differences=$(bin/console doctrine:schema:update --dump-sql 2>&1) || { echo "$differences"; exit 1; }
+                      if echo "$differences" | grep -Ei "tmonier_|sylius_invoicing"; then exit 1; fi
+                      echo "No difference on the tables of the pack"
+                  '
+
+            - name: Show the schema differences
+              if: failure()
+              run: |
+                  cd "$RUNNER_TEMP/project"
+                  bin/console doctrine:schema:update --dump-sql || true
+
+    recipe:
+        runs-on: ubuntu-latest
+        name: "Flex recipe in Sylius-Standard ${{ matrix.standard }}"
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - standard: "2.2.4"
+                      sylius: "~2.2.9"
+                    - standard: "2.3.0"
+                      sylius: "~2.3.0"
+        env:
+            APP_ENV: dev
+            DATABASE_URL: "mysql://root:root@127.0.0.1:3306/sylius?serverVersion=8.0&charset=utf8mb4"
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  path: pack
+
+            - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2.40.0
+              with:
+                  # Sylius-Standard requires PHP 8.3 (the plugins of the pack accept 8.2: written in the README)
+                  php-version: "8.3"
+                  extensions: intl, pdo_mysql, gd, zip, mbstring
+                  ini-values: memory_limit=-1
+                  tools: composer:v2
+
+            - name: Start MySQL
+              run: sudo systemctl start mysql.service
+
+            - name: Create the blank Sylius project
+              env:
+                  STANDARD: ${{ matrix.standard }}
+              run: |
+                  "$GITHUB_WORKSPACE/pack/bin/step" --plugin=sylius/sylius-standard --step=create-project -- \
+                      composer create-project "sylius/sylius-standard:$STANDARD" "$RUNNER_TEMP/project" --no-interaction --no-scripts --no-install
+
+            - name: Serve the recipe from a local endpoint and require the pack
+              env:
+                  SYLIUS: ${{ matrix.sylius }}
+              run: |
+                  set -o pipefail
+                  cd "$RUNNER_TEMP/project"
+                  PACK=$(php -r 'echo json_decode(file_get_contents(getenv("GITHUB_WORKSPACE") . "/pack/composer.json"), true)["name"];')
+                  php "$GITHUB_WORKSPACE/pack/bin/build-recipe-endpoint" --out="$RUNNER_TEMP/endpoint" --url=http://127.0.0.1:8765
+                  nohup php -S 127.0.0.1:8765 -t "$RUNNER_TEMP/endpoint" > "$RUNNER_TEMP/endpoint.log" 2>&1 &
+                  sleep 1
+                  # The local endpoint comes first; the pack is a path repository whose version is fixed so that the recipe 1.0 applies
+                  php -r '$c = json_decode(file_get_contents("composer.json"), true); array_unshift($c["extra"]["symfony"]["endpoint"], "http://127.0.0.1:8765/index.json"); $c["config"]["secure-http"] = false; file_put_contents("composer.json", json_encode($c, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));'
+                  composer config repositories.pack --json "{\"type\": \"path\", \"url\": \"$GITHUB_WORKSPACE/pack\", \"options\": {\"symlink\": false, \"versions\": {\"$PACK\": \"1.0.0\"}}}"
+                  PACKAGES=$(php "$GITHUB_WORKSPACE/pack/bin/apply-gestures" --packages --gestures="$GITHUB_WORKSPACE/pack/etc/gestures.json" | tr '\n' ' ')
+                  # shellcheck disable=SC2086
+                  "$GITHUB_WORKSPACE/pack/bin/step" --plugin=auto --step=composer-require -- \
+                      composer require "sylius/sylius:$SYLIUS" "$PACK:^1.0" $PACKAGES --no-scripts --no-interaction 2>&1 | tee "$RUNNER_TEMP/require.log"
+                  grep -F "Configuring $PACK" "$RUNNER_TEMP/require.log"
+
+            - name: Drop a bundle and its configuration that the skeleton declares and Sylius no longer installs
+              run: |
+                  # Sylius-Standard 2.2.4 lists FOSRestBundle in config/bundles.php, Sylius 2.2.12 does not install it
+                  cd "$RUNNER_TEMP/project"
+                  if [ ! -d vendor/friendsofsymfony/rest-bundle ] && grep -q 'FOS.RestBundle' config/bundles.php; then
+                      echo "FOSRestBundle is declared by the skeleton but not installed: removed from config/bundles.php"
+                      grep -v 'FOS.RestBundle' config/bundles.php > config/bundles.php.new
+                      mv config/bundles.php.new config/bundles.php
+                      rm -f config/packages/fos_rest.yaml
+                  fi
+
+            - name: Check what the Flex recipes of other packages did
+              run: |
+                  cd "$RUNNER_TEMP/project"
+                  php "$GITHUB_WORKSPACE/pack/bin/apply-gestures" --verify-flex --project=. --gestures="$GITHUB_WORKSPACE/pack/etc/gestures.json"
+
+            - name: Check that the recipe did what the gestures do (the gestures are not applied)
+              run: |
+                  cd "$RUNNER_TEMP/project"
+                  php "$GITHUB_WORKSPACE/pack/bin/apply-gestures" --verify-applied --project=. --gestures="$GITHUB_WORKSPACE/pack/etc/gestures.json"
 
             - name: Create the database and run the migrations
               run: |
