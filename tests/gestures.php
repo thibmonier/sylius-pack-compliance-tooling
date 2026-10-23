@@ -307,6 +307,14 @@ $test('with --plugin=auto a bundle namespace in the output is mapped to its plug
     return [1 === $code && str_contains($errors, 'FAIL plugin=' . $first['plugin'] . ' step=lint-container'), $errors];
 });
 
+$test('with --plugin=auto a service or configuration alias of a plugin in the output is mapped to its plugin', static function () use ($step, $root, $first): array {
+    $slug = str_replace('-', '_', substr($first['plugin'], strlen('tmonier/sylius-'), -strlen('-plugin')));
+    $command = 'fwrite(STDERR, ' . var_export('Rate limiter "tmonier_' . $slug . '_requests" requires the Lock component', true) . '); exit(1);';
+    [$code, , $errors] = run($step, ['--plugin=auto', '--step=database-create', '--root=' . $root, '--', PHP_BINARY, '-r', $command]);
+
+    return [1 === $code && str_contains($errors, 'FAIL plugin=' . $first['plugin'] . ' step=database-create'), $errors];
+});
+
 foreach ($temporaryDirectories as $directory) {
     is_dir($directory) && removeTree($directory);
 }
