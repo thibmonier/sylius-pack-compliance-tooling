@@ -267,6 +267,62 @@ foreach (['README.md' => 'readme', 'README.fr.md' => 'readme_fr'] as $readmeFile
     });
 }
 
+// What the Flex recipes of third-party packages already provide ("flex" of a plugin): checked, never applied
+
+$flexGestures = static function (array &$temporaryDirectories, string $plugin): string {
+    $path = temporaryDirectory($temporaryDirectories) . '/gestures.json';
+    file_put_contents($path, json_encode(['pack' => 'tmonier/sylius-pack-test', 'migrations' => 'doctrine:migrations:migrate', 'plugins' => [[
+        'plugin' => $plugin,
+        'flex' => ['bundles' => ['Acme\\ThirdPartyBundle\\AcmeThirdPartyBundle'], 'resources' => ['@AcmeThirdPartyBundle/config/routes.yaml']],
+        'bundles' => [], 'configuration' => [], 'routes' => [],
+    ]]], JSON_THROW_ON_ERROR));
+
+    return $path;
+};
+
+$test('bin/apply-gestures --verify-flex passes when the recipes registered the bundle and imported the resource', static function () use ($apply, $flexGestures, $first, &$temporaryDirectories): array {
+    $project = project($temporaryDirectories);
+    file_put_contents($project . '/config/bundles.php', "<?php\n\nreturn [\n    Acme\\ThirdPartyBundle\\AcmeThirdPartyBundle::class => ['all' => true],\n];\n");
+    file_put_contents($project . '/config/routes/acme.yaml', "acme:\n    resource: '@AcmeThirdPartyBundle/config/routes.yaml'\n");
+    [$code, , $errors] = run($apply, ['--verify-flex', '--project=' . $project, '--gestures=' . $flexGestures($temporaryDirectories, $first['plugin'])]);
+
+    return [0 === $code, $errors];
+});
+
+$test('bin/apply-gestures --verify-flex fails and names the plugin when a recipe did not register the bundle', static function () use ($apply, $flexGestures, $first, &$temporaryDirectories): array {
+    $project = project($temporaryDirectories);
+    file_put_contents($project . '/config/routes/acme.yaml', "acme:\n    resource: '@AcmeThirdPartyBundle/config/routes.yaml'\n");
+    [$code, , $errors] = run($apply, ['--verify-flex', '--project=' . $project, '--gestures=' . $flexGestures($temporaryDirectories, $first['plugin'])]);
+
+    return [1 === $code && str_contains($errors, 'FAIL plugin=' . $first['plugin'] . ' step=flex-bundles') && str_contains($errors, 'AcmeThirdPartyBundle'), $errors];
+});
+
+$test('bin/apply-gestures --verify-flex fails and names the plugin when a recipe did not import the resource', static function () use ($apply, $flexGestures, $first, &$temporaryDirectories): array {
+    $project = project($temporaryDirectories);
+    file_put_contents($project . '/config/bundles.php', "<?php\n\nreturn [\n    Acme\\ThirdPartyBundle\\AcmeThirdPartyBundle::class => ['all' => true],\n];\n");
+    [$code, , $errors] = run($apply, ['--verify-flex', '--project=' . $project, '--gestures=' . $flexGestures($temporaryDirectories, $first['plugin'])]);
+
+    return [1 === $code && str_contains($errors, 'FAIL plugin=' . $first['plugin'] . ' step=flex-resources') && str_contains($errors, '@AcmeThirdPartyBundle/config/routes.yaml'), $errors];
+});
+
+$test('bin/apply-gestures does not apply what the Flex recipes provide', static function () use ($apply, $flexGestures, $first, &$temporaryDirectories): array {
+    $project = project($temporaryDirectories);
+    [$code] = run($apply, ['--project=' . $project, '--gestures=' . $flexGestures($temporaryDirectories, $first['plugin'])]);
+
+    return [0 === $code && !str_contains((string) file_get_contents($project . '/config/bundles.php'), 'ThirdParty'), (string) file_get_contents($project . '/config/bundles.php')];
+});
+
+foreach (['README.md' => 'readme', 'README.fr.md' => 'readme_fr'] as $readmeFile => $key) {
+    $test($readmeFile . ': a bundle provided by a Flex recipe must be named in the README', static function () use ($check, $root, $readmeFile, &$temporaryDirectories): array {
+        $directory = fixture($root, $temporaryDirectories, static function (array &$files): void {
+            $files['gestures']['plugins'][0]['flex'] = ['bundles' => ['Acme\\ThirdPartyBundle\\AcmeThirdPartyBundle'], 'resources' => []];
+        });
+        [$code, , $errors] = run($check, ['--root=' . $directory]);
+
+        return [1 === $code && str_contains($errors, $readmeFile) && str_contains($errors, 'AcmeThirdPartyBundle'), $errors];
+    });
+}
+
 // bin/step
 
 $test('a command that succeeds passes through with its output and exit code 0', static function () use ($step): array {
