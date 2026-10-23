@@ -119,7 +119,7 @@ jobs:
                   STANDARD: ${{ matrix.standard }}
               run: |
                   "$GITHUB_WORKSPACE/pack/bin/step" --plugin=sylius/sylius-standard --step=create-project -- \
-                      composer create-project "sylius/sylius-standard:$STANDARD" "$RUNNER_TEMP/project" --no-interaction --no-scripts
+                      composer create-project "sylius/sylius-standard:$STANDARD" "$RUNNER_TEMP/project" --no-interaction --no-scripts --no-install
 
             - name: Require the pack (a path repository, the pack is not republished for the test)
               env:
@@ -128,8 +128,11 @@ jobs:
                   cd "$RUNNER_TEMP/project"
                   PACK=$(php -r 'echo json_decode(file_get_contents(getenv("GITHUB_WORKSPACE") . "/pack/composer.json"), true)["name"];')
                   composer config repositories.pack --json "{\"type\": \"path\", \"url\": \"$GITHUB_WORKSPACE/pack\", \"options\": {\"symlink\": false}}"
+                  # Sylius is pinned before the first resolution; the extra packages are the ones listed in etc/gestures.json
+                  PACKAGES=$(php "$GITHUB_WORKSPACE/pack/bin/apply-gestures" --packages --gestures="$GITHUB_WORKSPACE/pack/etc/gestures.json" | tr '\n' ' ')
+                  # shellcheck disable=SC2086
                   "$GITHUB_WORKSPACE/pack/bin/step" --plugin=auto --step=composer-require -- \
-                      composer require "sylius/sylius:$SYLIUS" "$PACK:*@dev" --update-with-all-dependencies --no-scripts --no-interaction
+                      composer require "sylius/sylius:$SYLIUS" "$PACK:*@dev" $PACKAGES --no-scripts --no-interaction
 
             - name: Apply the gestures of the README
               run: |

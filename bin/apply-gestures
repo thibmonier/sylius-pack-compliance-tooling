@@ -7,6 +7,7 @@
 // A file already in the project is kept, never overwritten. Exit code 1 and "FAIL plugin=... step=..." on stderr.
 //
 //   bin/apply-gestures --project=DIR [--gestures=etc/gestures.json]
+//   bin/apply-gestures --packages [--gestures=etc/gestures.json]   # the extra Composer packages, one per line
 
 declare(strict_types=1);
 
@@ -71,9 +72,18 @@ function writeFiles(string $project, string $plugin, string $step, string $direc
     }
 }
 
-$options = getopt('', ['project:', 'gestures::']);
+$options = getopt('', ['project:', 'gestures::', 'packages']);
 $project = rtrim((string) ($options['project'] ?? ''), '/');
 $gesturesFile = (string) ($options['gestures'] ?? dirname(__DIR__) . '/etc/gestures.json');
+if (isset($options['packages'])) {
+    $listed = json_decode((string) file_get_contents($gesturesFile), true, 512, JSON_THROW_ON_ERROR);
+    foreach ($listed['plugins'] as $entry) {
+        foreach ($entry['composer'] ?? [] as $package) {
+            echo $package . "\n";
+        }
+    }
+    exit(0);
+}
 if ('' === $project || !is_dir($project)) {
     fwrite(STDERR, "usage: bin/apply-gestures --project=DIR [--gestures=FILE]\n");
     exit(2);
