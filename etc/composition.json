@@ -1,0 +1,21 @@
+{
+    "pack": "tmonier/sylius-pack-compliance-tooling",
+    "members": [
+        "tmonier/sylius-audit-log-plugin",
+        "tmonier/sylius-bulk-actions-plugin",
+        "tmonier/sylius-command-palette-plugin",
+        "tmonier/sylius-facturx-plugin",
+        "tmonier/sylius-gpsr-plugin",
+        "tmonier/sylius-timeline-plugin"
+    ],
+    "suggest": [],
+    "excluded": [
+        "tmonier/sylius-admin-order-creation-plugin",
+        "tmonier/sylius-company-accounts-plugin",
+        "tmonier/sylius-purchase-approval-plugin",
+        "tmonier/sylius-quick-order-plugin",
+        "tmonier/sylius-quote-request-plugin",
+        "tmonier/sylius-tier-pricing-plugin",
+        "tmonier/sylius-withdrawal-plugin"
+    ]
+}
