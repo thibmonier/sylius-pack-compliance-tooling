@@ -315,6 +315,56 @@ $test('with --plugin=auto a service or configuration alias of a plugin in the ou
     return [1 === $code && str_contains($errors, 'FAIL plugin=' . $first['plugin'] . ' step=database-create'), $errors];
 });
 
+// bin/check-routes (debug:router --format=json of a project with both packs)
+
+$routes = static function (array &$temporaryDirectories, array $table): string {
+    $path = temporaryDirectory($temporaryDirectories) . '/routes.json';
+    $json = [];
+    foreach ($table as $name => [$route, $method]) {
+        $json[$name] = ['path' => $route, 'host' => 'ANY', 'method' => $method];
+    }
+    file_put_contents($path, json_encode($json, JSON_THROW_ON_ERROR));
+
+    return $path;
+};
+$checkRoutes = $root . '/bin/check-routes';
+$prefixes = '--prefixes=tmonier_,sylius_invoicing_';
+
+$test('routes without conflict pass', static function () use ($checkRoutes, $routes, $prefixes, &$temporaryDirectories): array {
+    $file = $routes($temporaryDirectories, ['tmonier_a_index' => ['/admin/a', 'GET'], 'tmonier_b_index' => ['/admin/b', 'GET'], 'sylius_home' => ['/', 'GET']]);
+    [$code, , $errors] = run($checkRoutes, ['--file=' . $file, $prefixes]);
+
+    return [0 === $code, $errors];
+});
+
+$test('two routes with the same path and method, one of a plugin, are refused and named', static function () use ($checkRoutes, $routes, $prefixes, &$temporaryDirectories): array {
+    $file = $routes($temporaryDirectories, ['tmonier_a_index' => ['/admin/x', 'GET'], 'tmonier_b_index' => ['/admin/x', 'GET']]);
+    [$code, , $errors] = run($checkRoutes, ['--file=' . $file, $prefixes]);
+
+    return [1 === $code && str_contains($errors, 'tmonier_a_index') && str_contains($errors, 'tmonier_b_index') && str_contains($errors, '/admin/x'), $errors];
+});
+
+$test('a route for any method conflicts with a route for GET on the same path', static function () use ($checkRoutes, $routes, $prefixes, &$temporaryDirectories): array {
+    $file = $routes($temporaryDirectories, ['tmonier_a_index' => ['/admin/x', 'ANY'], 'sylius_core_x' => ['/admin/x', 'GET']]);
+    [$code, , $errors] = run($checkRoutes, ['--file=' . $file, $prefixes]);
+
+    return [1 === $code && str_contains($errors, 'sylius_core_x'), $errors];
+});
+
+$test('the same path with different methods is not a conflict', static function () use ($checkRoutes, $routes, $prefixes, &$temporaryDirectories): array {
+    $file = $routes($temporaryDirectories, ['tmonier_a_show' => ['/admin/x', 'GET'], 'tmonier_a_update' => ['/admin/x', 'POST|PUT']]);
+    [$code, , $errors] = run($checkRoutes, ['--file=' . $file, $prefixes]);
+
+    return [0 === $code, $errors];
+});
+
+$test('two routes of the application itself on the same path are not reported', static function () use ($checkRoutes, $routes, $prefixes, &$temporaryDirectories): array {
+    $file = $routes($temporaryDirectories, ['sylius_a' => ['/x', 'GET'], 'sylius_b' => ['/x', 'GET']]);
+    [$code, , $errors] = run($checkRoutes, ['--file=' . $file, $prefixes]);
+
+    return [0 === $code, $errors];
+});
+
 foreach ($temporaryDirectories as $directory) {
     is_dir($directory) && removeTree($directory);
 }
