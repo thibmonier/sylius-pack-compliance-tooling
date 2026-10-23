@@ -35,8 +35,14 @@ jobs:
             - name: Test the composition checker
               run: php tests/run.php
 
+            - name: Test the gestures, their README check and the step wrapper
+              run: php tests/gestures.php
+
             - name: Check the composition
               run: bin/check-composition
+
+            - name: Check the gestures against both READMEs
+              run: bin/check-gestures
 
             - name: Check that every action is pinned
               run: bin/check-pinned-refs
@@ -77,3 +83,116 @@ jobs:
 
             - name: Check the locked plugins against the composition
               run: bin/check-composition --lock="$RUNNER_TEMP/project/composer.lock"
+
+    install:
+        runs-on: ubuntu-latest
+        name: "Installation in Sylius-Standard ${{ matrix.standard }}"
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - standard: "2.2.4"
+                      sylius: "~2.2.9"
+                    - standard: "2.3.0"
+                      sylius: "~2.3.0"
+        env:
+            APP_ENV: dev
+            DATABASE_URL: "mysql://root:root@127.0.0.1:3306/sylius?serverVersion=8.0&charset=utf8mb4"
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  path: pack
+
+            - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2.40.0
+              with:
+                  # Sylius-Standard requires PHP 8.3 (the plugins of the pack accept 8.2: written in the README)
+                  php-version: "8.3"
+                  extensions: intl, pdo_mysql, gd, zip, mbstring
+                  ini-values: memory_limit=-1
+                  tools: composer:v2
+
+            - name: Start MySQL
+              run: sudo systemctl start mysql.service
+
+            - name: Create the blank Sylius project
+              env:
+                  STANDARD: ${{ matrix.standard }}
+              run: |
+                  "$GITHUB_WORKSPACE/pack/bin/step" --plugin=sylius/sylius-standard --step=create-project -- \
+                      composer create-project "sylius/sylius-standard:$STANDARD" "$RUNNER_TEMP/project" --no-interaction --no-scripts --no-install
+
+            - name: Require the pack (a path repository, the pack is not republished for the test)
+              env:
+                  SYLIUS: ${{ matrix.sylius }}
+              run: |
+                  cd "$RUNNER_TEMP/project"
+                  PACK=$(php -r 'echo json_decode(file_get_contents(getenv("GITHUB_WORKSPACE") . "/pack/composer.json"), true)["name"];')
+                  composer config repositories.pack --json "{\"type\": \"path\", \"url\": \"$GITHUB_WORKSPACE/pack\", \"options\": {\"symlink\": false}}"
+                  # Sylius is pinned before the first resolution; the extra packages are the ones listed in etc/gestures.json
+                  PACKAGES=$(php "$GITHUB_WORKSPACE/pack/bin/apply-gestures" --packages --gestures="$GITHUB_WORKSPACE/pack/etc/gestures.json" | tr '\n' ' ')
+                  # shellcheck disable=SC2086
+                  "$GITHUB_WORKSPACE/pack/bin/step" --plugin=auto --step=composer-require -- \
+                      composer require "sylius/sylius:$SYLIUS" "$PACK:*@dev" $PACKAGES --no-scripts --no-interaction
+
+            - name: Drop a bundle and its configuration that the skeleton declares and Sylius no longer installs
+              run: |
+                  # Sylius-Standard 2.2.4 lists FOSRestBundle in config/bundles.php, Sylius 2.2.12 does not install it
+                  cd "$RUNNER_TEMP/project"
+                  if [ ! -d vendor/friendsofsymfony/rest-bundle ] && grep -q 'FOS.RestBundle' config/bundles.php; then
+                      echo "FOSRestBundle is declared by the skeleton but not installed: removed from config/bundles.php"
+                      grep -v 'FOS.RestBundle' config/bundles.php > config/bundles.php.new
+                      mv config/bundles.php.new config/bundles.php
+                      rm -f config/packages/fos_rest.yaml
+                  fi
+
+            - name: Check what the Flex recipes of other packages did
+              run: |
+                  cd "$RUNNER_TEMP/project"
+                  php "$GITHUB_WORKSPACE/pack/bin/apply-gestures" --verify-flex --project=. --gestures="$GITHUB_WORKSPACE/pack/etc/gestures.json"
+
+            - name: Apply the gestures of the README
+              run: |
+                  cd "$RUNNER_TEMP/project"
+                  php "$GITHUB_WORKSPACE/pack/bin/apply-gestures" --project=. --gestures="$GITHUB_WORKSPACE/pack/etc/gestures.json"
+
+            - name: Create the database and run the migrations
+              run: |
+                  cd "$RUNNER_TEMP/project"
+                  STEP="$GITHUB_WORKSPACE/pack/bin/step"
+                  "$STEP" --plugin=auto --step=database-create -- bin/console doctrine:database:create --if-not-exists
+                  "$STEP" --plugin=auto --step=migrations -- bin/console doctrine:migrations:migrate --no-interaction
+
+            - name: Check that the migrations created tables of the pack
+              run: |
+                  count=$(mysql -uroot -proot -N -e "SHOW TABLES FROM sylius LIKE 'tmonier%'" | wc -l)
+                  echo "$count tables of the pack"
+                  test "$count" -gt 0
+
+            - name: Lint the container
+              run: |
+                  cd "$RUNNER_TEMP/project"
+                  "$GITHUB_WORKSPACE/pack/bin/step" --plugin=auto --step=lint-container -- bin/console lint:container
+
+            - name: Compile the routes
+              run: |
+                  cd "$RUNNER_TEMP/project"
+                  "$GITHUB_WORKSPACE/pack/bin/step" --plugin=auto --step=debug-router -- bin/console debug:router --no-interaction --format=json > "$RUNNER_TEMP/routes.json"
+
+            - name: Validate the Doctrine mapping and the schema of the pack
+              run: |
+                  cd "$RUNNER_TEMP/project"
+                  STEP="$GITHUB_WORKSPACE/pack/bin/step"
+                  "$STEP" --plugin=auto --step=schema-validate -- bin/console doctrine:schema:validate --skip-sync
+                  # The blank Sylius-Standard schema is itself out of sync (tables of the Mollie, refund and messenger
+                  # bundles), so the synchronisation is checked on the tables of the pack and of the Invoicing Plugin.
+                  "$STEP" --plugin=auto --step=schema-sync -- bash -c '
+                      differences=$(bin/console doctrine:schema:update --dump-sql 2>&1) || { echo "$differences"; exit 1; }
+                      if echo "$differences" | grep -Ei "tmonier_|sylius_invoicing"; then exit 1; fi
+                      echo "No difference on the tables of the pack"
+                  '
+
+            - name: Show the schema differences
+              if: failure()
+              run: |
+                  cd "$RUNNER_TEMP/project"
+                  bin/console doctrine:schema:update --dump-sql || true

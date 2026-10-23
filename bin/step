@@ -1,0 +1,116 @@
+#!/usr/bin/env php
+<?php
+
+// Runs one step of the installation in CI and, when it fails, says which plugin and which step: the last line on stderr is
+// "FAIL plugin=<name> step=<step>" (plus a GitHub Actions annotation) and the exit code of the command is kept.
+// With --plugin=auto the plugin is the first member of the pack named in the output of the command (a package name, or
+// the namespace of one of its bundles, or the alias of its services); when none is named, it is the pack itself.
+//
+//   bin/step --plugin=<name|auto> --step=<step> [--root=DIR] -- command [arguments...]
+
+declare(strict_types=1);
+
+$arguments = array_slice($argv, 1);
+$separator = array_search('--', $arguments, true);
+if (false === $separator || $separator === count($arguments) - 1) {
+    fwrite(STDERR, "usage: bin/step --plugin=<name|auto> --step=<step> [--root=DIR] -- command [arguments...]\n");
+    exit(2);
+}
+$command = array_slice($arguments, $separator + 1);
+$options = [];
+foreach (array_slice($arguments, 0, $separator) as $argument) {
+    if (1 === preg_match('/^--(plugin|step|root)=(.*)$/', $argument, $match)) {
+        $options[$match[1]] = $match[2];
+    }
+}
+$plugin = $options['plugin'] ?? '';
+$step = $options['step'] ?? '';
+$root = rtrim($options['root'] ?? dirname(__DIR__), '/');
+if ('' === $plugin || '' === $step) {
+    fwrite(STDERR, "usage: bin/step --plugin=<name|auto> --step=<step> [--root=DIR] -- command [arguments...]\n");
+    exit(2);
+}
+
+/** Runs the command, copies its output as it comes and returns the exit code and what it wrote. */
+function runCommand(array $command): array
+{
+    $process = proc_open($command, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+    if (!is_resource($process)) {
+        fwrite(STDERR, "cannot start {$command[0]}\n");
+
+        return [127, ''];
+    }
+    $captured = '';
+    $targets = [(int) $pipes[1] => STDOUT, (int) $pipes[2] => STDERR];
+    while ([] !== $pipes) {
+        $read = array_values($pipes);
+        $write = $except = null;
+        if (false === stream_select($read, $write, $except, null)) {
+            break;
+        }
+        foreach ($read as $stream) {
+            $chunk = fread($stream, 8192);
+            if (false === $chunk || '' === $chunk) {
+                if (feof($stream)) {
+                    fclose($stream);
+                    unset($pipes[array_search($stream, $pipes, true)]);
+                }
+                continue;
+            }
+            $captured .= $chunk;
+            fwrite($targets[(int) $stream], $chunk);
+        }
+    }
+
+    return [proc_close($process), $captured];
+}
+
+function readJson(string $path): array
+{
+    return is_file($path) ? json_decode((string) file_get_contents($path), true) ?? [] : [];
+}
+
+/** The member named in the output: by package name first, then by the namespace of one of its bundles. */
+function guessPlugin(string $output, string $root): string
+{
+    $composition = readJson($root . '/etc/composition.json');
+    $pack = (string) (readJson($root . '/composer.json')['name'] ?? ($composition['pack'] ?? 'unknown'));
+    $members = $composition['members'] ?? [];
+
+    if (false !== preg_match_all('#tmonier/sylius-[a-z0-9-]+-plugin#', $output, $matches)) {
+        foreach ($matches[0] as $name) {
+            if (in_array($name, $members, true)) {
+                return $name;
+            }
+        }
+    }
+    // Services, parameters and configuration aliases carry the slug of the plugin: tmonier_b2b_mcp_..., tmonier_sylius_b2b_mcp.
+    foreach ($members as $member) {
+        $slug = str_replace('-', '_', substr($member, strlen('tmonier/sylius-'), -strlen('-plugin')));
+        if (str_contains($output, 'tmonier_' . $slug) || str_contains($output, 'tmonier_sylius_' . $slug)) {
+            return $member;
+        }
+    }
+    $normalized = str_replace('\\\\', '\\', $output);
+    foreach (readJson($root . '/etc/gestures.json')['plugins'] ?? [] as $entry) {
+        foreach ($entry['bundles'] as $bundle) {
+            $namespace = substr($bundle, 0, (int) strrpos($bundle, '\\'));
+            $alias = substr($bundle, strlen($namespace) + 1);
+            if (str_starts_with($bundle, 'Tmonier\\') && (str_contains($normalized, $namespace) || str_contains($normalized, '@' . $alias))) {
+                return $entry['plugin'];
+            }
+        }
+    }
+
+    return $pack;
+}
+
+[$code, $output] = runCommand($command);
+if (0 === $code) {
+    exit(0);
+}
+
+$plugin = 'auto' === $plugin ? guessPlugin($output, $root) : $plugin;
+fwrite(STDERR, "::error title=Installation step failed::plugin={$plugin} step={$step}\n");
+fwrite(STDERR, "FAIL plugin={$plugin} step={$step}\n");
+exit($code);

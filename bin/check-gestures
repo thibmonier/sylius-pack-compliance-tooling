@@ -1,0 +1,107 @@
+#!/usr/bin/env php
+<?php
+
+// Checks that the installation gestures of the pack (etc/gestures.json, the single source applied by bin/apply-gestures)
+// are the ones the READMEs describe: every bundle, configuration resource and routes resource of the gestures file
+// appears in README.md and README.fr.md, none appears there that the file does not have, the migrations command is
+// given, each extra Composer package ("composer" of a plugin) is required by a "composer require" line and no other
+// package is, and the plugins of the gestures file are exactly the members of the pack.
+// Exit code 1 and one line per problem on stderr.
+//
+//   bin/check-gestures [--root=DIR]
+
+declare(strict_types=1);
+
+const BUNDLE_PATTERN = '/(?:[A-Z][A-Za-z0-9]*\\\\)+[A-Z][A-Za-z0-9]*(?:Plugin|Bundle)\b/';
+const RESOURCE_PATTERN = '#@[A-Za-z0-9_]+/config/(?:config|routes)\.yaml#';
+const REQUIRE_PATTERN = '#composer require\s+(?:-\S+\s+)*([a-z0-9_.-]+/[a-z0-9_.-]+)#';
+
+/** @return array<string, mixed> */
+function readJson(string $path): array
+{
+    $content = is_file($path) ? file_get_contents($path) : false;
+    if (false === $content) {
+        fwrite(STDERR, "KO cannot read {$path}\n");
+        exit(1);
+    }
+
+    return json_decode($content, true, 512, JSON_THROW_ON_ERROR);
+}
+
+/** @return array{bundles: list<string>, resources: list<string>, packages: list<string>} */
+function expectedGestures(array $gestures): array
+{
+    $bundles = [];
+    $resources = [];
+    $packages = [];
+    foreach ($gestures['plugins'] as $plugin) {
+        array_push($bundles, ...$plugin['bundles'], ...($plugin['flex']['bundles'] ?? []));
+        array_push($packages, ...($plugin['composer'] ?? []));
+        array_push($resources, ...($plugin['flex']['resources'] ?? []));
+        foreach (array_merge($plugin['configuration'], $plugin['routes']) as $entry) {
+            $resources[] = $entry['resource'];
+        }
+    }
+
+    return ['bundles' => array_values(array_unique($bundles)), 'resources' => array_values(array_unique($resources)), 'packages' => array_values(array_unique($packages))];
+}
+
+/** @return list<string> */
+function checkMembers(array $gestures, array $composition): array
+{
+    $problems = [];
+    $named = array_column($gestures['plugins'], 'plugin');
+    foreach (array_diff($named, $composition['members']) as $extra) {
+        $problems[] = "etc/gestures.json: {$extra} is not a member of the pack";
+    }
+    foreach (array_diff($composition['members'], $named) as $missing) {
+        $problems[] = "etc/gestures.json: member {$missing} has no gestures";
+    }
+
+    return $problems;
+}
+
+/** @return list<string> */
+function checkReadme(string $file, string $content, array $expected, string $migrations, string $pack): array
+{
+    preg_match_all(BUNDLE_PATTERN, $content, $bundleMatches);
+    preg_match_all(RESOURCE_PATTERN, $content, $resourceMatches);
+    preg_match_all(REQUIRE_PATTERN, $content, $requireMatches);
+    $required = array_values(array_diff(array_unique($requireMatches[1]), [$pack]));
+    $problems = [];
+
+    foreach ([['bundle', $expected['bundles'], $bundleMatches[0]], ['resource', $expected['resources'], $resourceMatches[0]], ['composer package', $expected['packages'], $required]] as [$kind, $wanted, $found]) {
+        foreach (array_diff($wanted, $found) as $missing) {
+            $problems[] = "{$file}: gesture missing, {$kind} {$missing} is in etc/gestures.json but not in the README";
+        }
+        foreach (array_diff(array_unique($found), $wanted) as $extra) {
+            $problems[] = "{$file}: {$kind} {$extra} is in the README but not in etc/gestures.json";
+        }
+    }
+    if (!str_contains($content, $migrations)) {
+        $problems[] = "{$file}: the migrations command {$migrations} is missing";
+    }
+
+    return $problems;
+}
+
+$options = getopt('', ['root::']);
+$root = rtrim((string) ($options['root'] ?? dirname(__DIR__)), '/');
+$gestures = readJson($root . '/etc/gestures.json');
+$problems = checkMembers($gestures, readJson($root . '/etc/composition.json'));
+$expected = expectedGestures($gestures);
+
+foreach (['README.md', 'README.fr.md'] as $readme) {
+    $content = is_file($root . '/' . $readme) ? file_get_contents($root . '/' . $readme) : false;
+    if (false === $content) {
+        $problems[] = "{$readme}: file is missing";
+        continue;
+    }
+    array_push($problems, ...checkReadme($readme, $content, $expected, $gestures['migrations'], $gestures['pack']));
+}
+
+foreach ($problems as $problem) {
+    fwrite(STDERR, 'KO ' . $problem . "\n");
+}
+echo [] === $problems ? sprintf("OK %s: %d plugins, %d bundles, %d resources, same in both READMEs\n", $gestures['pack'], count($gestures['plugins']), count($expected['bundles']), count($expected['resources'])) : '';
+exit([] === $problems ? 0 : 1);

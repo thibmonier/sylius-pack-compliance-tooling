@@ -1,0 +1,152 @@
+#!/usr/bin/env php
+<?php
+
+// Applies the installation gestures of a pack to a Symfony project: registers the bundles in config/bundles.php, writes
+// one configuration file per entry in config/packages/ and one routes file in config/routes/. The gestures come from
+// etc/gestures.json, the single source that the READMEs are checked against (bin/check-gestures).
+// A file already in the project is kept, never overwritten. Exit code 1 and "FAIL plugin=... step=..." on stderr.
+//
+//   bin/apply-gestures --project=DIR [--gestures=etc/gestures.json]
+//   bin/apply-gestures --packages [--gestures=etc/gestures.json]   # the extra Composer packages, one per line
+//   bin/apply-gestures --verify-flex --project=DIR [--gestures=...] # the bundles and imports that Flex recipes must have made
+
+declare(strict_types=1);
+
+function fail(string $plugin, string $step, string $reason): never
+{
+    fwrite(STDERR, "FAIL plugin={$plugin} step={$step}\n    {$reason}\n");
+    exit(1);
+}
+
+/** @param list<string> $classes */
+function registerBundles(string $project, string $plugin, array $classes): void
+{
+    $file = $project . '/config/bundles.php';
+    $content = is_file($file) ? file_get_contents($file) : false;
+    if (false === $content) {
+        fail($plugin, 'bundles', "cannot read {$file}");
+    }
+
+    $lines = '';
+    foreach ($classes as $class) {
+        if (!str_contains($content, $class . '::class')) {
+            $lines .= "    {$class}::class => ['all' => true],\n";
+        }
+    }
+    $end = strrpos($content, '];');
+    if ('' === $lines) {
+        return;
+    }
+    if (false === $end) {
+        fail($plugin, 'bundles', "{$file} has no closing bracket");
+    }
+    file_put_contents($file, substr($content, 0, $end) . $lines . substr($content, $end));
+}
+
+/**
+ * @param list<array{file: string, resource: string, name?: string}> $entries
+ * @param callable(array{file: string, resource: string, name?: string}): string $render
+ */
+function writeFiles(string $project, string $plugin, string $step, string $directory, array $entries, callable $header, callable $render): void
+{
+    $folder = $project . '/config/' . $directory;
+    if ([] === $entries) {
+        return;
+    }
+    if (!is_dir($folder)) {
+        fail($plugin, $step, "{$folder} does not exist");
+    }
+
+    $byFile = [];
+    foreach ($entries as $entry) {
+        $byFile[$entry['file']][] = $entry;
+    }
+    foreach ($byFile as $name => $group) {
+        $path = $folder . '/' . $name . '.yaml';
+        if (is_file($path)) {
+            continue;
+        }
+        $content = $header() . implode('', array_map($render, $group));
+        if (false === file_put_contents($path, $content)) {
+            fail($plugin, $step, "cannot write {$path}");
+        }
+    }
+}
+
+/**
+ * What the Flex recipes of third-party packages (bundles, configuration, routes) must already have done: the bundles are
+ * registered and each resource is imported by a file of config/packages or config/routes. Never applied by this script.
+ *
+ * @param array{bundles: list<string>, resources: list<string>} $flex
+ */
+function verifyFlex(string $project, string $plugin, array $flex): void
+{
+    $bundles = is_file($project . '/config/bundles.php') ? (string) file_get_contents($project . '/config/bundles.php') : '';
+    foreach ($flex['bundles'] as $class) {
+        if (!str_contains($bundles, $class . '::class')) {
+            fail($plugin, 'flex-bundles', "{$class} is not registered in config/bundles.php: the recipe of its package did not run");
+        }
+    }
+
+    $imports = '';
+    foreach (['packages', 'routes'] as $directory) {
+        foreach (glob($project . '/config/' . $directory . '/*.yaml') ?: [] as $file) {
+            $imports .= (string) file_get_contents($file);
+        }
+    }
+    foreach ($flex['resources'] as $resource) {
+        if (!str_contains($imports, $resource)) {
+            fail($plugin, 'flex-resources', "{$resource} is not imported in config/packages or config/routes: the recipe of its package did not run");
+        }
+    }
+}
+
+$options = getopt('', ['project:', 'gestures::', 'packages', 'verify-flex']);
+$project = rtrim((string) ($options['project'] ?? ''), '/');
+$gesturesFile = (string) ($options['gestures'] ?? dirname(__DIR__) . '/etc/gestures.json');
+if (isset($options['packages'])) {
+    $listed = json_decode((string) file_get_contents($gesturesFile), true, 512, JSON_THROW_ON_ERROR);
+    foreach ($listed['plugins'] as $entry) {
+        foreach ($entry['composer'] ?? [] as $package) {
+            echo $package . "\n";
+        }
+    }
+    exit(0);
+}
+if ('' === $project || !is_dir($project)) {
+    fwrite(STDERR, "usage: bin/apply-gestures --project=DIR [--gestures=FILE]\n");
+    exit(2);
+}
+
+$gestures = json_decode((string) file_get_contents($gesturesFile), true, 512, JSON_THROW_ON_ERROR);
+
+if (isset($options['verify-flex'])) {
+    foreach ($gestures['plugins'] as $entry) {
+        verifyFlex($project, $entry['plugin'], $entry['flex'] ?? ['bundles' => [], 'resources' => []]);
+    }
+    exit(0);
+}
+
+foreach ($gestures['plugins'] as $entry) {
+    $plugin = $entry['plugin'];
+    registerBundles($project, $plugin, $entry['bundles']);
+    writeFiles(
+        $project,
+        $plugin,
+        'configuration',
+        'packages',
+        $entry['configuration'],
+        static fn (): string => "imports:\n",
+        static fn (array $item): string => "    - { resource: \"{$item['resource']}\" }\n",
+    );
+    writeFiles(
+        $project,
+        $plugin,
+        'routes',
+        'routes',
+        $entry['routes'],
+        static fn (): string => '',
+        static fn (array $item): string => "{$item['name']}:\n    resource: \"{$item['resource']}\"\n",
+    );
+    echo "OK {$plugin}\n";
+}

@@ -13,13 +13,13 @@ This package is a Composer metapackage: it contains no code. It requires the six
 
 - It does: one command installs the six plugins at versions known to resolve together.
 - It does not: declare the bundles, import the configuration and the routes, run the migrations or schedule the tasks. Those steps stay manual, plugin by plugin, and are listed in [What is left to do by hand](#what-is-left-to-do-by-hand). No Symfony Flex recipe exists yet for this pack.
-- It does not guarantee a running shop: the composition is checked by Composer resolution (see [Checks](#checks)), not by a full installation.
+- It does not guarantee your shop: the pack is installed in a blank Sylius project by the continuous integration, with the gestures below and nothing else (see [Verified in CI](#verified-in-ci)); your own application may differ.
 
 ## Requirements
 
 - PHP 8.2 or later
 - Sylius 2.2 or later (2.3 supported)
-- The [Sylius Invoicing Plugin](https://github.com/Sylius/InvoicingPlugin#installation), installed and configured before the Factur-X plugin. Composer installs it with the pack; its own steps (bundle, configuration, routes, migrations, PDF engine) stay manual.
+- The [Sylius Invoicing Plugin](https://github.com/Sylius/InvoicingPlugin#installation), installed and configured before the Factur-X plugin. Composer installs it with the pack; its bundle, configuration and routes are done by its recipe (see below), its other steps (migrations, PDF engine) follow its documentation.
 
 ## Installation
 
@@ -48,20 +48,23 @@ For each plugin, in this order (the Invoicing Plugin before Factur-X). The detai
 
 | Plugin | Bundles to register in `config/bundles.php` | Configuration (`config/packages/`) | Routes (`config/routes/`) | Migrations | Other |
 |--------|----------------------------------------------|------------------------------------|---------------------------|------------|-------|
-| facturx | `Sylius\InvoicingPlugin\SyliusInvoicingPlugin` (already configured), then `Tmonier\SyliusFacturXPlugin\TmonierSyliusFacturXPlugin` | `@TmonierSyliusFacturXPlugin/config/config.yaml` | `@TmonierSyliusFacturXPlugin/config/routes.yaml` | yes | Factur-X settings and seller data per channel in the admin |
+| facturx | `Tmonier\SyliusFacturXPlugin\TmonierSyliusFacturXPlugin` | `@TmonierSyliusFacturXPlugin/config/config.yaml` | `@TmonierSyliusFacturXPlugin/config/routes.yaml` | yes | Factur-X settings and seller data per channel in the admin |
 | gpsr | `Tmonier\SyliusGpsrPlugin\TmonierSyliusGpsrPlugin` | `@TmonierSyliusGpsrPlugin/config/config.yaml` | `@TmonierSyliusGpsrPlugin/config/routes.yaml` | yes | create responsible persons and manufacturers, fill the product safety tab |
 | audit-log | `Tmonier\SyliusAuditLogPlugin\TmonierSyliusAuditLogPlugin` | `@TmonierSyliusAuditLogPlugin/config/config.yaml` | `@TmonierSyliusAuditLogPlugin/config/routes.yaml` | yes | schedule `tmonier:audit-log:purge` |
 | timeline | `Tmonier\SyliusTimelinePlugin\TmonierSyliusTimelinePlugin` | `@TmonierSyliusTimelinePlugin/config/config.yaml` | `@TmonierSyliusTimelinePlugin/config/routes.yaml` | yes | optional `tmonier:timeline:backfill` for existing orders |
 | command-palette | `Tmonier\SyliusCommandPalettePlugin\TmonierSyliusCommandPalettePlugin` | `@TmonierSyliusCommandPalettePlugin/config/config.yaml` | `@TmonierSyliusCommandPalettePlugin/config/routes.yaml` | no | `bin/console assets:install` |
 | bulk-actions | `Tmonier\SyliusBulkActionsPlugin\TmonierSyliusBulkActionsPlugin` | `@TmonierSyliusBulkActionsPlugin/config/config.yaml` | `@TmonierSyliusBulkActionsPlugin/config/routes.yaml` | no | none |
 
-Totals for the pack: 7 bundles (the Invoicing Plugin may already be registered), 6 configuration imports, 6 route imports, 4 sets of migrations and 2 scheduled or one-off tasks (purge, assets).
+Totals for the pack: 6 bundles, 6 configuration imports, 6 route imports, 4 sets of migrations and 2 scheduled or one-off tasks (purge, assets). The bundle, the configuration and the routes of the Invoicing Plugin are done by its Symfony Flex recipe (next section).
+
+### Done by the recipe of the Invoicing Plugin
+
+In a project that uses Symfony Flex (Sylius-Standard does), `composer require` runs the recipe of `sylius/invoicing-plugin`: it registers `Sylius\InvoicingPlugin\SyliusInvoicingPlugin` before the Factur-X plugin and imports `@SyliusInvoicingPlugin/config/config.yaml` and `@SyliusInvoicingPlugin/config/routes.yaml`. Do not repeat them. Without Flex recipes, add them by hand, as the documentation of the Invoicing Plugin describes. The continuous integration checks that the recipe ran (`bin/apply-gestures --verify-flex`).
 
 ### Bundles
 
 ```php
 // config/bundles.php
-Sylius\InvoicingPlugin\SyliusInvoicingPlugin::class => ['all' => true],
 Tmonier\SyliusFacturXPlugin\TmonierSyliusFacturXPlugin::class => ['all' => true],
 Tmonier\SyliusGpsrPlugin\TmonierSyliusGpsrPlugin::class => ['all' => true],
 Tmonier\SyliusAuditLogPlugin\TmonierSyliusAuditLogPlugin::class => ['all' => true],
@@ -100,13 +103,31 @@ bin/console doctrine:migrations:migrate
 - no plugin excluded from the packs appears in `composer.json` or in a README;
 - with `--lock`, after a Composer resolution, no locked plugin requires a plugin that is not in the pack (the failure names the dependency).
 
+`bin/check-gestures` verifies that the plugins of `etc/gestures.json` are exactly the members, and that every bundle and every configuration or routes resource of that file is in both READMEs and that no other one is.
+
 ```bash
 php tests/run.php                  # tests of the checker
 bin/check-composition              # composition of composer.json and of the READMEs
 bin/check-composition --lock=composer.lock
 ```
 
-The continuous integration also resolves the pack in a throwaway project (`composer update --no-install`) with Sylius 2.2 and 2.3.
+The continuous integration also resolves the pack in a throwaway project (`composer update --no-install`) with Sylius 2.2 and 2.3, and installs it (see below).
+
+## Verified in CI
+
+The gestures above are not only described: they are applied by `bin/apply-gestures` from `etc/gestures.json`, and `bin/check-gestures` fails when one of the two READMEs describes other gestures than that file.
+
+The `install` job creates a blank `sylius/sylius-standard` project (2.2.4 with Sylius `~2.2.9`, and 2.3.0 with Sylius `~2.3.0`), adds this repository as a Composer `path` repository (the pack is not republished for the test), requires it, applies the gestures, runs the migrations, then `lint:container` and `doctrine:schema:validate`. A failure names the plugin and the step: `FAIL plugin=… step=…` (`bin/step`). The `install` job of the [AI and headless pack](https://github.com/thibmonier/sylius-pack-ai-headless) also installs both packs in the same project and compiles the container (no service or route conflict).
+
+```bash
+php tests/gestures.php             # tests of the gestures, of their README check and of the step wrapper
+bin/check-gestures                 # etc/gestures.json against both READMEs
+bin/apply-gestures --project=DIR   # applies the gestures to a Symfony project
+```
+
+Two adjustments are written in the workflow rather than hidden. The 2.2.4 skeleton declares `FOSRestBundle` and its configuration file although Sylius 2.2.12 no longer installs the package: the job removes both when the package is absent. The schema of a blank Sylius-Standard project is itself out of sync after its migrations (tables of the Mollie, refund, payment request and messenger bundles), so `doctrine:schema:validate --skip-sync` checks the mapping and the synchronisation is checked on the tables of the pack only.
+
+What the job does not cover: the "Other" column of the table (Factur-X settings, scheduled tasks, assets), the PDF engine of the Invoicing Plugin, PHP 8.2 (Sylius-Standard requires PHP 8.3, so the job runs on PHP 8.3 although the plugins of the pack accept PHP 8.2), and Sylius 2.2 before 2.2.9.
 
 ## Maintenance
 
