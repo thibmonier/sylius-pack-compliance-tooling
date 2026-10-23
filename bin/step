@@ -95,7 +95,8 @@ function guessPlugin(string $output, string $root): string
     foreach (readJson($root . '/etc/gestures.json')['plugins'] ?? [] as $entry) {
         foreach ($entry['bundles'] as $bundle) {
             $namespace = substr($bundle, 0, (int) strrpos($bundle, '\\'));
-            if (str_starts_with($bundle, 'Tmonier\\') && str_contains($normalized, $namespace)) {
+            $alias = substr($bundle, strlen($namespace) + 1);
+            if (str_starts_with($bundle, 'Tmonier\\') && (str_contains($normalized, $namespace) || str_contains($normalized, '@' . $alias))) {
                 return $entry['plugin'];
             }
         }
