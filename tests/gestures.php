@@ -233,6 +233,40 @@ $test('a member without gestures is refused and named', static function () use (
     return [1 === $code && str_contains($errors, $first['plugin']), $errors];
 });
 
+// Composer packages that a plugin needs besides the pack ("composer" in the gestures file)
+
+$test('bin/apply-gestures --packages lists the extra Composer packages of the gestures file', static function () use ($apply, $first, &$temporaryDirectories): array {
+    $directory = temporaryDirectory($temporaryDirectories);
+    $custom = ['pack' => 'tmonier/sylius-pack-test', 'migrations' => 'doctrine:migrations:migrate', 'plugins' => [
+        ['plugin' => $first['plugin'], 'composer' => ['symfony/lock', 'acme/bridge'], 'bundles' => [], 'configuration' => [], 'routes' => []],
+        ['plugin' => 'tmonier/sylius-other-plugin', 'bundles' => [], 'configuration' => [], 'routes' => []],
+    ]];
+    file_put_contents($directory . '/gestures.json', json_encode($custom, JSON_THROW_ON_ERROR));
+    [$code, $output] = run($apply, ['--packages', '--gestures=' . $directory . '/gestures.json']);
+
+    return [0 === $code && "symfony/lock\nacme/bridge\n" === $output, $output];
+});
+
+foreach (['README.md' => 'readme', 'README.fr.md' => 'readme_fr'] as $readmeFile => $key) {
+    $test($readmeFile . ': an extra Composer package missing from the README is refused and named', static function () use ($check, $root, $readmeFile, &$temporaryDirectories): array {
+        $directory = fixture($root, $temporaryDirectories, static function (array &$files): void {
+            $files['gestures']['plugins'][0]['composer'] = ['acme/extra-package'];
+        });
+        [$code, , $errors] = run($check, ['--root=' . $directory]);
+
+        return [1 === $code && str_contains($errors, $readmeFile) && str_contains($errors, 'acme/extra-package'), $errors];
+    });
+
+    $test($readmeFile . ': a composer require in the README that the gestures file does not have is refused and named', static function () use ($check, $root, $key, $readmeFile, &$temporaryDirectories): array {
+        $directory = fixture($root, $temporaryDirectories, static function (array &$files) use ($key): void {
+            $files[$key] .= "\n```bash\ncomposer require acme/other-package\n```\n";
+        });
+        [$code, , $errors] = run($check, ['--root=' . $directory]);
+
+        return [1 === $code && str_contains($errors, $readmeFile) && str_contains($errors, 'acme/other-package'), $errors];
+    });
+}
+
 // bin/step
 
 $test('a command that succeeds passes through with its output and exit code 0', static function () use ($step): array {
