@@ -125,6 +125,8 @@ bin/check-gestures                 # etc/gestures.json against both READMEs
 bin/apply-gestures --project=DIR   # applies the gestures to a Symfony project
 ```
 
+Two adjustments are written in the workflow rather than hidden. The 2.2.4 skeleton declares `FOSRestBundle` and its configuration file although Sylius 2.2.12 no longer installs the package: the job removes both when the package is absent. The schema of a blank Sylius-Standard project is itself out of sync after its migrations (tables of the Mollie, refund, payment request and messenger bundles), so `doctrine:schema:validate --skip-sync` checks the mapping and the synchronisation is checked on the tables of the pack only.
+
 What the job does not cover: the "Other" column of the table (Factur-X settings, scheduled tasks, assets), the PDF engine of the Invoicing Plugin, PHP 8.2 (Sylius-Standard requires PHP 8.3, so the job runs on PHP 8.3 although the plugins of the pack accept PHP 8.2), and Sylius 2.2 before 2.2.9.
 
 ## Maintenance

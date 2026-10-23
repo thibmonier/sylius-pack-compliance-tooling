@@ -77,7 +77,7 @@ function guessPlugin(string $output, string $root): string
     $pack = (string) (readJson($root . '/composer.json')['name'] ?? ($composition['pack'] ?? 'unknown'));
     $members = $composition['members'] ?? [];
 
-    if (1 === preg_match_all('#tmonier/sylius-[a-z0-9-]+-plugin#', $output, $matches)) {
+    if (false !== preg_match_all('#tmonier/sylius-[a-z0-9-]+-plugin#', $output, $matches)) {
         foreach ($matches[0] as $name) {
             if (in_array($name, $members, true)) {
                 return $name;
