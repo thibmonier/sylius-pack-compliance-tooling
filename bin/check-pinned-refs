@@ -1,0 +1,69 @@
+#!/usr/bin/env php
+<?php
+
+// Supply chain check (US-081): GitHub Actions are referenced by the SHA of a commit (with the version in a comment) and
+// container images by digest (sha256), never by a movable tag. Exit code 1 and one line per offending reference.
+//
+//   bin/check-pinned-refs [ROOT]    # default: the project root (.github/workflows/*.y*ml, docker/Dockerfile)
+
+declare(strict_types=1);
+
+$root = $argv[1] ?? dirname(__DIR__);
+$problems = [];
+
+foreach (glob($root . '/.github/workflows/*.y*ml') ?: [] as $file) {
+    foreach (file($file, FILE_IGNORE_NEW_LINES) ?: [] as $number => $line) {
+        $where = basename($file) . ':' . ($number + 1);
+        if (1 === preg_match('/^\s*(?:-\s+)?uses:\s*(\S+)/', $line, $match) && !str_starts_with($match[1], './')) {
+            if (1 !== preg_match('/@[0-9a-f]{40}$/', $match[1])) {
+                $problems[] = $where . ' action not pinned by commit SHA: ' . $match[1];
+            } elseif (1 !== preg_match('/#\s*v?\d+(\.\d+)*/', $line)) {
+                $problems[] = $where . ' pinned action without a version comment: ' . $match[1];
+            }
+        }
+        if (1 === preg_match('/^\s*image:\s*(\S+)/', $line, $match)) {
+            if (!str_contains($match[1], '@sha256:')) {
+                $problems[] = $where . ' image not pinned by digest: ' . $match[1];
+            }
+            continue;
+        }
+        // Images named in a shell command (`docker run ... mysql:8.4`); `tools: composer:v2` and `host:3306` are not images.
+        if (1 !== preg_match('/^\s*tools:/', $line) && 1 === preg_match_all('#(?<![\w/.-])((?:mysql|node|composer|dunglas/[\w.-]+|axllent/[\w.-]+|ghcr\.io/[\w./-]+|docker\.io/[\w./-]+):(?!\d+(?![\w.]))[\w.-]+)(?!@)(?![\w.:-])#', $line, $matches)) {
+            foreach ($matches[1] as $image) {
+                $problems[] = $where . ' image not pinned by digest: ' . $image;
+            }
+        }
+    }
+}
+
+$dockerfile = $root . '/docker/Dockerfile';
+if (is_file($dockerfile)) {
+    $stages = [];
+    foreach (file($dockerfile, FILE_IGNORE_NEW_LINES) ?: [] as $number => $line) {
+        $where = 'Dockerfile:' . ($number + 1);
+        $images = [];
+        if (1 === preg_match('/^FROM\s+(\S+)(?:\s+AS\s+(\S+))?/i', $line, $match)) {
+            $images[] = $match[1];
+            if (isset($match[2])) {
+                $stages[strtolower($match[2])] = true;
+            }
+        }
+        if (1 === preg_match('/^COPY\s+--from=(\S+)/i', $line, $match) && !isset($stages[strtolower($match[1])])) {
+            $images[] = $match[1];
+        }
+        if (1 === preg_match('/^ARG\s+\w*IMAGE\w*=(\S+)/', $line, $match)) {
+            $images[] = $match[1];
+        }
+        foreach ($images as $image) {
+            if ('scratch' !== $image && !str_starts_with($image, '$') && !isset($stages[strtolower($image)]) && !str_contains($image, '@sha256:')) {
+                $problems[] = $where . ' image not pinned by digest: ' . $image;
+            }
+        }
+    }
+}
+
+foreach ($problems as $problem) {
+    fwrite(STDERR, 'KO ' . $problem . "\n");
+}
+echo [] === $problems ? "OK every action and image is pinned\n" : '';
+exit([] === $problems ? 0 : 1);

@@ -1,0 +1,141 @@
+#!/usr/bin/env php
+<?php
+
+// Composition check of a plugin pack (metapackage): the plugins a pack requires are exactly the members listed in
+// etc/composition.json, no excluded plugin appears in composer.json or in a README, the suggested plugins stay in
+// "suggest", and (with --lock) no locked plugin requires a plugin that is not in the pack.
+// Exit code 1 and one line per problem on stderr.
+//
+//   bin/check-composition [--root=DIR] [--lock=composer.lock]
+
+declare(strict_types=1);
+
+const VENDOR_PREFIX = 'tmonier/';
+// Assembled in two parts so that the repository itself never contains the phrase it forbids.
+const FORBIDDEN_PHRASES = ['Sylius ' . 'Plus', 'Enter' . 'prise'];
+
+/** @return array<string, mixed> */
+function readJson(string $path): array
+{
+    $content = is_file($path) ? file_get_contents($path) : false;
+    if (false === $content) {
+        fwrite(STDERR, "KO cannot read {$path}\n");
+        exit(1);
+    }
+
+    return json_decode($content, true, 512, JSON_THROW_ON_ERROR);
+}
+
+/** @return list<string> */
+function pluginNames(array $packages): array
+{
+    return array_values(array_filter(array_keys($packages), static fn (string $name): bool => str_starts_with($name, VENDOR_PREFIX)));
+}
+
+/** @return list<string> */
+function checkComposer(array $composer, array $composition): array
+{
+    $problems = [];
+    $members = $composition['members'];
+    $require = $composer['require'] ?? [];
+    $suggest = $composer['suggest'] ?? [];
+
+    if ('metapackage' !== ($composer['type'] ?? null)) {
+        $problems[] = 'composer.json: type must be metapackage';
+    }
+    if ($composition['pack'] !== ($composer['name'] ?? null)) {
+        $problems[] = "composer.json: name must be {$composition['pack']}";
+    }
+    foreach (array_diff($members, pluginNames($require)) as $missing) {
+        $problems[] = "composer.json: member {$missing} is missing from require";
+    }
+    foreach (array_diff(pluginNames($require), $members) as $extra) {
+        $problems[] = "composer.json: {$extra} is required but is not a member of the pack";
+    }
+    foreach ($composition['excluded'] as $excluded) {
+        if (isset($require[$excluded]) || isset($suggest[$excluded])) {
+            $problems[] = "composer.json: {$excluded} is excluded from the packs";
+        }
+    }
+    foreach ($composition['suggest'] as $suggested) {
+        if (isset($require[$suggested])) {
+            $problems[] = "composer.json: {$suggested} must be in suggest, not in require";
+        }
+        if (!isset($suggest[$suggested])) {
+            $problems[] = "composer.json: {$suggested} is missing from suggest";
+        }
+    }
+
+    return $problems;
+}
+
+/** @return list<string> */
+function checkReadme(string $file, string $content, array $composition): array
+{
+    $problems = [];
+    foreach ($composition['excluded'] as $excluded) {
+        $slug = substr($excluded, strlen(VENDOR_PREFIX));
+        if (false !== stripos($content, $excluded) || false !== stripos($content, $slug)) {
+            $problems[] = "{$file}: names {$excluded}, which is excluded from the packs";
+        }
+    }
+    foreach (FORBIDDEN_PHRASES as $phrase) {
+        if (false !== stripos($content, $phrase)) {
+            $problems[] = "{$file}: must not mention \"{$phrase}\"";
+        }
+    }
+
+    return $problems;
+}
+
+/** @return list<string> */
+function checkLock(array $lock, array $composition): array
+{
+    $problems = [];
+    $locked = [];
+    foreach ($lock['packages'] ?? [] as $package) {
+        $locked[$package['name']] = $package['require'] ?? [];
+    }
+    unset($locked[$composition['pack']]);
+
+    foreach (array_diff($composition['members'], array_keys($locked)) as $missing) {
+        $problems[] = "lock: member {$missing} is not locked";
+    }
+    foreach ($locked as $name => $require) {
+        if (!str_starts_with($name, VENDOR_PREFIX)) {
+            continue;
+        }
+        if (!in_array($name, $composition['members'], true)) {
+            $problems[] = "lock: {$name} is locked but is not a member of the pack";
+        }
+        foreach (array_diff(pluginNames($require), $composition['members']) as $dependency) {
+            $problems[] = "lock: {$name} requires {$dependency}, which is not in the pack";
+        }
+    }
+
+    return $problems;
+}
+
+$options = getopt('', ['root::', 'lock::']);
+$root = rtrim((string) ($options['root'] ?? dirname(__DIR__)), '/');
+$composition = readJson($root . '/etc/composition.json');
+$problems = checkComposer(readJson($root . '/composer.json'), $composition);
+
+foreach (['README.md', 'README.fr.md'] as $readme) {
+    $content = is_file($root . '/' . $readme) ? file_get_contents($root . '/' . $readme) : false;
+    if (false === $content) {
+        $problems[] = "{$readme}: file is missing";
+        continue;
+    }
+    array_push($problems, ...checkReadme($readme, $content, $composition));
+}
+
+if (isset($options['lock'])) {
+    array_push($problems, ...checkLock(readJson((string) $options['lock']), $composition));
+}
+
+foreach ($problems as $problem) {
+    fwrite(STDERR, 'KO ' . $problem . "\n");
+}
+echo [] === $problems ? sprintf("OK %s: %d members, no excluded plugin\n", $composition['pack'], count($composition['members'])) : '';
+exit([] === $problems ? 0 : 1);

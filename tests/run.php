@@ -6,7 +6,7 @@
 
 declare(strict_types=1);
 
-const PLUS_PHRASE = 'Sylius Plus';
+const PLUS_PHRASE = 'Sylius ' . 'Plus';
 
 $root = dirname(__DIR__);
 $script = $root . '/bin/check-composition';

@@ -1,0 +1,25 @@
+{
+    "name": "tmonier/sylius-pack-compliance-tooling",
+    "type": "metapackage",
+    "description": "Compliance and tooling pack for Sylius 2: Factur-X invoices, GPSR product safety data, audit log, order and customer timeline, command palette and bulk actions, installed with one command",
+    "keywords": [
+        "ecommerce",
+        "sylius",
+        "sylius-plugin",
+        "symfony",
+        "metapackage",
+        "factur-x",
+        "gpsr",
+        "audit-log",
+        "admin"
+    ],
+    "license": "MIT",
+    "require": {
+        "tmonier/sylius-audit-log-plugin": "^1.0",
+        "tmonier/sylius-bulk-actions-plugin": "^1.0",
+        "tmonier/sylius-command-palette-plugin": "^1.1",
+        "tmonier/sylius-facturx-plugin": "^1.1",
+        "tmonier/sylius-gpsr-plugin": "^1.0",
+        "tmonier/sylius-timeline-plugin": "^1.0"
+    }
+}

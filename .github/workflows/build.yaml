@@ -1,0 +1,79 @@
+name: Build
+
+on:
+    push:
+        branches-ignore:
+            - 'dependabot/**'
+    pull_request:
+    schedule:
+        -
+            cron: "0 1 * * 6" # Run at 1am every Saturday, to catch a member bound that no longer resolves
+    workflow_dispatch: ~
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+permissions:
+    contents: read
+
+jobs:
+    checks:
+        runs-on: ubuntu-latest
+        name: "Composition checks"
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+            - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2.40.0
+              with:
+                  php-version: "8.4"
+                  tools: composer:v2
+
+            - name: Validate composer.json
+              run: composer validate --ansi --strict
+
+            - name: Test the composition checker
+              run: php tests/run.php
+
+            - name: Check the composition
+              run: bin/check-composition
+
+            - name: Check that every action is pinned
+              run: bin/check-pinned-refs
+
+    resolve:
+        runs-on: ubuntu-latest
+        name: "Resolution with Sylius ${{ matrix.sylius }}"
+        strategy:
+            fail-fast: false
+            matrix:
+                sylius: ["~2.2.9", "~2.3.0"]
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+            - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2.40.0
+              with:
+                  php-version: "8.4"
+                  tools: composer:v2
+
+            - name: Resolve the pack in a throwaway project
+              env:
+                  SYLIUS: ${{ matrix.sylius }}
+              run: |
+                  PACK=$(php -r 'echo json_decode(file_get_contents("composer.json"), true)["name"];')
+                  mkdir "$RUNNER_TEMP/project"
+                  cat > "$RUNNER_TEMP/project/composer.json" <<JSON
+                  {
+                      "name": "throwaway/project",
+                      "type": "project",
+                      "minimum-stability": "stable",
+                      "config": {"allow-plugins": false},
+                      "repositories": [{"type": "path", "url": "$GITHUB_WORKSPACE", "options": {"symlink": false}}],
+                      "require": {"sylius/sylius": "$SYLIUS", "$PACK": "*@dev"}
+                  }
+                  JSON
+                  cd "$RUNNER_TEMP/project"
+                  composer update --no-install --no-scripts --no-plugins --no-interaction
+
+            - name: Check the locked plugins against the composition
+              run: bin/check-composition --lock="$RUNNER_TEMP/project/composer.lock"
