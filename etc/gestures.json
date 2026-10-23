@@ -4,26 +4,25 @@
     "plugins": [
         {
             "plugin": "tmonier/sylius-facturx-plugin",
+            "flex": {
+                "bundles": [
+                    "Sylius\\InvoicingPlugin\\SyliusInvoicingPlugin"
+                ],
+                "resources": [
+                    "@SyliusInvoicingPlugin/config/config.yaml",
+                    "@SyliusInvoicingPlugin/config/routes.yaml"
+                ]
+            },
             "bundles": [
-                "Sylius\\InvoicingPlugin\\SyliusInvoicingPlugin",
                 "Tmonier\\SyliusFacturXPlugin\\TmonierSyliusFacturXPlugin"
             ],
             "configuration": [
-                {
-                    "file": "sylius_invoicing",
-                    "resource": "@SyliusInvoicingPlugin/config/config.yaml"
-                },
                 {
                     "file": "tmonier_sylius_facturx",
                     "resource": "@TmonierSyliusFacturXPlugin/config/config.yaml"
                 }
             ],
             "routes": [
-                {
-                    "file": "sylius_invoicing",
-                    "name": "sylius_invoicing",
-                    "resource": "@SyliusInvoicingPlugin/config/routes.yaml"
-                },
                 {
                     "file": "tmonier_sylius_facturx",
                     "name": "tmonier_sylius_facturx",

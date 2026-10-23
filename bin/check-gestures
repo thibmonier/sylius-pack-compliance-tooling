@@ -35,8 +35,9 @@ function expectedGestures(array $gestures): array
     $resources = [];
     $packages = [];
     foreach ($gestures['plugins'] as $plugin) {
-        array_push($bundles, ...$plugin['bundles']);
+        array_push($bundles, ...$plugin['bundles'], ...($plugin['flex']['bundles'] ?? []));
         array_push($packages, ...($plugin['composer'] ?? []));
+        array_push($resources, ...($plugin['flex']['resources'] ?? []));
         foreach (array_merge($plugin['configuration'], $plugin['routes']) as $entry) {
             $resources[] = $entry['resource'];
         }

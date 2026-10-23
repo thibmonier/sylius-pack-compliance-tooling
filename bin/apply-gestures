@@ -8,6 +8,7 @@
 //
 //   bin/apply-gestures --project=DIR [--gestures=etc/gestures.json]
 //   bin/apply-gestures --packages [--gestures=etc/gestures.json]   # the extra Composer packages, one per line
+//   bin/apply-gestures --verify-flex --project=DIR [--gestures=...] # the bundles and imports that Flex recipes must have made
 
 declare(strict_types=1);
 
@@ -72,7 +73,35 @@ function writeFiles(string $project, string $plugin, string $step, string $direc
     }
 }
 
-$options = getopt('', ['project:', 'gestures::', 'packages']);
+/**
+ * What the Flex recipes of third-party packages (bundles, configuration, routes) must already have done: the bundles are
+ * registered and each resource is imported by a file of config/packages or config/routes. Never applied by this script.
+ *
+ * @param array{bundles: list<string>, resources: list<string>} $flex
+ */
+function verifyFlex(string $project, string $plugin, array $flex): void
+{
+    $bundles = is_file($project . '/config/bundles.php') ? (string) file_get_contents($project . '/config/bundles.php') : '';
+    foreach ($flex['bundles'] as $class) {
+        if (!str_contains($bundles, $class . '::class')) {
+            fail($plugin, 'flex-bundles', "{$class} is not registered in config/bundles.php: the recipe of its package did not run");
+        }
+    }
+
+    $imports = '';
+    foreach (['packages', 'routes'] as $directory) {
+        foreach (glob($project . '/config/' . $directory . '/*.yaml') ?: [] as $file) {
+            $imports .= (string) file_get_contents($file);
+        }
+    }
+    foreach ($flex['resources'] as $resource) {
+        if (!str_contains($imports, $resource)) {
+            fail($plugin, 'flex-resources', "{$resource} is not imported in config/packages or config/routes: the recipe of its package did not run");
+        }
+    }
+}
+
+$options = getopt('', ['project:', 'gestures::', 'packages', 'verify-flex']);
 $project = rtrim((string) ($options['project'] ?? ''), '/');
 $gesturesFile = (string) ($options['gestures'] ?? dirname(__DIR__) . '/etc/gestures.json');
 if (isset($options['packages'])) {
@@ -90,6 +119,13 @@ if ('' === $project || !is_dir($project)) {
 }
 
 $gestures = json_decode((string) file_get_contents($gesturesFile), true, 512, JSON_THROW_ON_ERROR);
+
+if (isset($options['verify-flex'])) {
+    foreach ($gestures['plugins'] as $entry) {
+        verifyFlex($project, $entry['plugin'], $entry['flex'] ?? ['bundles' => [], 'resources' => []]);
+    }
+    exit(0);
+}
 
 foreach ($gestures['plugins'] as $entry) {
     $plugin = $entry['plugin'];

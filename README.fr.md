@@ -19,7 +19,7 @@ Ce paquet est un métapaquet Composer : il ne contient aucun code. Il requiert l
 
 - PHP 8.2 ou plus
 - Sylius 2.2 ou plus (2.3 pris en charge)
-- Le [plugin de facturation officiel de Sylius](https://github.com/Sylius/InvoicingPlugin#installation), installé et configuré avant le plugin Factur-X. Composer l'installe avec le pack ; son bundle, sa configuration et ses routes figurent dans les gestes ci-dessous, ses autres étapes (migrations, moteur PDF) suivent sa documentation.
+- Le [plugin de facturation officiel de Sylius](https://github.com/Sylius/InvoicingPlugin#installation), installé et configuré avant le plugin Factur-X. Composer l'installe avec le pack ; son bundle, sa configuration et ses routes sont faits par sa recette (voir ci-dessous), ses autres étapes (migrations, moteur PDF) suivent sa documentation.
 
 ## Installation
 
@@ -48,20 +48,23 @@ Pour chaque plugin, dans cet ordre (le plugin de facturation avant Factur-X). Le
 
 | Plugin | Bundles à déclarer dans `config/bundles.php` | Configuration (`config/packages/`) | Routes (`config/routes/`) | Migrations | Autre |
 |--------|-----------------------------------------------|------------------------------------|---------------------------|------------|-------|
-| facturx | `Sylius\InvoicingPlugin\SyliusInvoicingPlugin` (déjà configuré), puis `Tmonier\SyliusFacturXPlugin\TmonierSyliusFacturXPlugin` | `@SyliusInvoicingPlugin/config/config.yaml` puis `@TmonierSyliusFacturXPlugin/config/config.yaml` | `@SyliusInvoicingPlugin/config/routes.yaml` puis `@TmonierSyliusFacturXPlugin/config/routes.yaml` | oui | réglages Factur-X et données du vendeur par canal, dans l'administration |
+| facturx | `Tmonier\SyliusFacturXPlugin\TmonierSyliusFacturXPlugin` | `@TmonierSyliusFacturXPlugin/config/config.yaml` | `@TmonierSyliusFacturXPlugin/config/routes.yaml` | oui | réglages Factur-X et données du vendeur par canal, dans l'administration |
 | gpsr | `Tmonier\SyliusGpsrPlugin\TmonierSyliusGpsrPlugin` | `@TmonierSyliusGpsrPlugin/config/config.yaml` | `@TmonierSyliusGpsrPlugin/config/routes.yaml` | oui | créer les personnes responsables et les fabricants, remplir l'onglet de sécurité des produits |
 | audit-log | `Tmonier\SyliusAuditLogPlugin\TmonierSyliusAuditLogPlugin` | `@TmonierSyliusAuditLogPlugin/config/config.yaml` | `@TmonierSyliusAuditLogPlugin/config/routes.yaml` | oui | planifier `tmonier:audit-log:purge` |
 | timeline | `Tmonier\SyliusTimelinePlugin\TmonierSyliusTimelinePlugin` | `@TmonierSyliusTimelinePlugin/config/config.yaml` | `@TmonierSyliusTimelinePlugin/config/routes.yaml` | oui | `tmonier:timeline:backfill` facultatif pour les commandes existantes |
 | command-palette | `Tmonier\SyliusCommandPalettePlugin\TmonierSyliusCommandPalettePlugin` | `@TmonierSyliusCommandPalettePlugin/config/config.yaml` | `@TmonierSyliusCommandPalettePlugin/config/routes.yaml` | non | `bin/console assets:install` |
 | bulk-actions | `Tmonier\SyliusBulkActionsPlugin\TmonierSyliusBulkActionsPlugin` | `@TmonierSyliusBulkActionsPlugin/config/config.yaml` | `@TmonierSyliusBulkActionsPlugin/config/routes.yaml` | non | aucun |
 
-Total pour le pack : 7 bundles (le plugin de facturation peut déjà être déclaré), 7 imports de configuration, 7 imports de routes, 4 jeux de migrations et 2 tâches planifiées ou ponctuelles (purge, assets).
+Total pour le pack : 6 bundles, 6 imports de configuration, 6 imports de routes, 4 jeux de migrations et 2 tâches planifiées ou ponctuelles (purge, assets). Le bundle, la configuration et les routes du plugin de facturation sont faits par sa recette Symfony Flex (section suivante).
+
+### Fait par la recette du plugin de facturation
+
+Dans un projet qui utilise Symfony Flex (Sylius-Standard en utilise), `composer require` exécute la recette de `sylius/invoicing-plugin` : elle déclare `Sylius\InvoicingPlugin\SyliusInvoicingPlugin` avant le plugin Factur-X et importe `@SyliusInvoicingPlugin/config/config.yaml` et `@SyliusInvoicingPlugin/config/routes.yaml`. Ne pas les répéter. Sans recettes Flex, les ajouter à la main, comme le décrit la documentation du plugin de facturation. L'intégration continue vérifie que la recette a bien été exécutée (`bin/apply-gestures --verify-flex`).
 
 ### Bundles
 
 ```php
 // config/bundles.php
-Sylius\InvoicingPlugin\SyliusInvoicingPlugin::class => ['all' => true],
 Tmonier\SyliusFacturXPlugin\TmonierSyliusFacturXPlugin::class => ['all' => true],
 Tmonier\SyliusGpsrPlugin\TmonierSyliusGpsrPlugin::class => ['all' => true],
 Tmonier\SyliusAuditLogPlugin\TmonierSyliusAuditLogPlugin::class => ['all' => true],

@@ -145,6 +145,11 @@ jobs:
                       rm -f config/packages/fos_rest.yaml
                   fi
 
+            - name: Check what the Flex recipes of other packages did
+              run: |
+                  cd "$RUNNER_TEMP/project"
+                  php "$GITHUB_WORKSPACE/pack/bin/apply-gestures" --verify-flex --project=. --gestures="$GITHUB_WORKSPACE/pack/etc/gestures.json"
+
             - name: Apply the gestures of the README
               run: |
                   cd "$RUNNER_TEMP/project"
@@ -167,6 +172,11 @@ jobs:
               run: |
                   cd "$RUNNER_TEMP/project"
                   "$GITHUB_WORKSPACE/pack/bin/step" --plugin=auto --step=lint-container -- bin/console lint:container
+
+            - name: Compile the routes
+              run: |
+                  cd "$RUNNER_TEMP/project"
+                  "$GITHUB_WORKSPACE/pack/bin/step" --plugin=auto --step=debug-router -- bin/console debug:router --no-interaction --format=json > "$RUNNER_TEMP/routes.json"
 
             - name: Validate the Doctrine mapping and the schema of the pack
               run: |
