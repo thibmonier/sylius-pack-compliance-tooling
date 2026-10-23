@@ -12,7 +12,7 @@ This package is a Composer metapackage: it contains no code. It requires the six
 ## What a metapackage does, and does not do
 
 - It does: one command installs the six plugins at versions known to resolve together.
-- It does not: declare the bundles, import the configuration and the routes, run the migrations or schedule the tasks. Those steps stay manual, plugin by plugin, and are listed in [What is left to do by hand](#what-is-left-to-do-by-hand). No Symfony Flex recipe exists yet for this pack.
+- It does not: declare the bundles, import the configuration and the routes, run the migrations or schedule the tasks. Those steps stay manual, plugin by plugin, and are listed in [What is left to do by hand](#what-is-left-to-do-by-hand). Until the Flex recipe of the pack is published on `symfony/recipes-contrib` (see [Flex recipe](#flex-recipe)), they are not done by `composer require`.
 - It does not guarantee your shop: the pack is installed in a blank Sylius project by the continuous integration, with the gestures below and nothing else (see [Verified in CI](#verified-in-ci)); your own application may differ.
 
 ## Requirements
@@ -93,6 +93,25 @@ tmonier_sylius_gpsr:
 
 ```bash
 bin/console doctrine:migrations:migrate
+```
+
+## Flex recipe
+
+The `recipe/` directory holds the Symfony Flex recipe of this pack, in the layout of `symfony/recipes-contrib`: a manifest that registers the bundles of the table above and copies the configuration and routes files. **It is not published yet.** Flex only finds recipes published on `symfony/recipes-contrib`, so until then `composer require` registers nothing and the gestures above stay necessary. A pull request on that public repository is opened only with the agreement of the maintainer.
+
+What is tested:
+
+- Flex applies a recipe to a metapackage: the CI serves the recipe from a local endpoint (`bin/build-recipe-endpoint`), requires the pack in a blank Sylius project **without applying the gestures**, then runs the checks of the `install` job (`recipe` job, Sylius-Standard 2.2.4 and 2.3.0).
+- `bin/flex-trial` replays, in a throwaway Symfony project, the installation, the removal (`composer remove` unregisters the bundles and removes the files the recipe wrote) and the case of a file already in the application (it is not overwritten).
+- `bin/check-recipe` fails when the recipe differs from `etc/gestures.json`: the bundles and the files come from the same source as the gestures.
+
+Limit of Flex, observed in the trial: it records in `symfony.lock` the files of the recipe, including one that the application had already written under the same name, and removes it on `composer remove`. Keep such a file under another name or in version control. The recipe does not run the migrations and does not do the steps of the "Other" column.
+
+```bash
+php tests/recipe.php               # tests of the recipe and of the endpoint
+bin/check-recipe                   # recipe against etc/gestures.json
+bin/flex-trial                     # replays the trial (php, composer and network needed)
+bin/build-recipe-endpoint --out=DIR # the JSON that Flex reads from an endpoint
 ```
 
 ## Checks
