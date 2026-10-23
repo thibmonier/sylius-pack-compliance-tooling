@@ -433,6 +433,16 @@ $test('with --plugin=auto the name of a bundle in a resource path is mapped to i
     return [1 === $code && str_contains($errors, 'FAIL plugin=' . $first['plugin'] . ' step=debug-router'), $errors];
 });
 
+$test('with --plugin=auto the first member named among several mentions is the plugin of the failure', static function () use ($step, $root): array {
+    $composition = json_decode((string) file_get_contents($root . '/etc/composition.json'), true, 512, JSON_THROW_ON_ERROR);
+    [$first, $second] = $composition['members'];
+    $message = $composition['pack'] . ' dev-main requires ' . $second . ' ^99.0 -> found ' . $second . '[1.0.0] but it does not match; also ' . $first . ' is required';
+    $command = 'fwrite(STDERR, ' . var_export($message, true) . '); exit(2);';
+    [$code, , $errors] = run($step, ['--plugin=auto', '--step=composer-require', '--root=' . $root, '--', PHP_BINARY, '-r', $command]);
+
+    return [2 === $code && str_contains($errors, 'FAIL plugin=' . $second . ' step=composer-require'), $errors];
+});
+
 foreach ($temporaryDirectories as $directory) {
     is_dir($directory) && removeTree($directory);
 }
