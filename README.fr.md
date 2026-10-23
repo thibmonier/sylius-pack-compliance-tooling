@@ -13,13 +13,13 @@ Ce paquet est un métapaquet Composer : il ne contient aucun code. Il requiert l
 
 - Il fait : une commande installe les six plugins à des versions dont la résolution ensemble est vérifiée.
 - Il ne fait pas : déclarer les bundles, importer la configuration et les routes, lancer les migrations ni planifier les tâches. Ces étapes restent manuelles, plugin par plugin, et sont listées dans [Ce qui reste à faire à la main](#ce-qui-reste-à-faire-à-la-main). Aucune recette Symfony Flex n'existe encore pour ce pack.
-- Il ne garantit pas une boutique qui démarre : la composition est vérifiée par la résolution de Composer (voir [Vérifications](#vérifications)), pas par une installation complète.
+- Il ne garantit pas votre boutique : l'intégration continue installe le pack dans un projet Sylius vierge, avec les gestes ci-dessous et rien d'autre (voir [Vérifié en CI](#vérifié-en-ci)) ; votre application peut différer.
 
 ## Prérequis
 
 - PHP 8.2 ou plus
 - Sylius 2.2 ou plus (2.3 pris en charge)
-- Le [plugin de facturation officiel de Sylius](https://github.com/Sylius/InvoicingPlugin#installation), installé et configuré avant le plugin Factur-X. Composer l'installe avec le pack ; ses propres étapes (bundle, configuration, routes, migrations, moteur PDF) restent manuelles.
+- Le [plugin de facturation officiel de Sylius](https://github.com/Sylius/InvoicingPlugin#installation), installé et configuré avant le plugin Factur-X. Composer l'installe avec le pack ; son bundle, sa configuration et ses routes figurent dans les gestes ci-dessous, ses autres étapes (migrations, moteur PDF) suivent sa documentation.
 
 ## Installation
 
@@ -48,14 +48,14 @@ Pour chaque plugin, dans cet ordre (le plugin de facturation avant Factur-X). Le
 
 | Plugin | Bundles à déclarer dans `config/bundles.php` | Configuration (`config/packages/`) | Routes (`config/routes/`) | Migrations | Autre |
 |--------|-----------------------------------------------|------------------------------------|---------------------------|------------|-------|
-| facturx | `Sylius\InvoicingPlugin\SyliusInvoicingPlugin` (déjà configuré), puis `Tmonier\SyliusFacturXPlugin\TmonierSyliusFacturXPlugin` | `@TmonierSyliusFacturXPlugin/config/config.yaml` | `@TmonierSyliusFacturXPlugin/config/routes.yaml` | oui | réglages Factur-X et données du vendeur par canal, dans l'administration |
+| facturx | `Sylius\InvoicingPlugin\SyliusInvoicingPlugin` (déjà configuré), puis `Tmonier\SyliusFacturXPlugin\TmonierSyliusFacturXPlugin` | `@SyliusInvoicingPlugin/config/config.yaml` puis `@TmonierSyliusFacturXPlugin/config/config.yaml` | `@SyliusInvoicingPlugin/config/routes.yaml` puis `@TmonierSyliusFacturXPlugin/config/routes.yaml` | oui | réglages Factur-X et données du vendeur par canal, dans l'administration |
 | gpsr | `Tmonier\SyliusGpsrPlugin\TmonierSyliusGpsrPlugin` | `@TmonierSyliusGpsrPlugin/config/config.yaml` | `@TmonierSyliusGpsrPlugin/config/routes.yaml` | oui | créer les personnes responsables et les fabricants, remplir l'onglet de sécurité des produits |
 | audit-log | `Tmonier\SyliusAuditLogPlugin\TmonierSyliusAuditLogPlugin` | `@TmonierSyliusAuditLogPlugin/config/config.yaml` | `@TmonierSyliusAuditLogPlugin/config/routes.yaml` | oui | planifier `tmonier:audit-log:purge` |
 | timeline | `Tmonier\SyliusTimelinePlugin\TmonierSyliusTimelinePlugin` | `@TmonierSyliusTimelinePlugin/config/config.yaml` | `@TmonierSyliusTimelinePlugin/config/routes.yaml` | oui | `tmonier:timeline:backfill` facultatif pour les commandes existantes |
 | command-palette | `Tmonier\SyliusCommandPalettePlugin\TmonierSyliusCommandPalettePlugin` | `@TmonierSyliusCommandPalettePlugin/config/config.yaml` | `@TmonierSyliusCommandPalettePlugin/config/routes.yaml` | non | `bin/console assets:install` |
 | bulk-actions | `Tmonier\SyliusBulkActionsPlugin\TmonierSyliusBulkActionsPlugin` | `@TmonierSyliusBulkActionsPlugin/config/config.yaml` | `@TmonierSyliusBulkActionsPlugin/config/routes.yaml` | non | aucun |
 
-Total pour le pack : 7 bundles (le plugin de facturation peut déjà être déclaré), 6 imports de configuration, 6 imports de routes, 4 jeux de migrations et 2 tâches planifiées ou ponctuelles (purge, assets).
+Total pour le pack : 7 bundles (le plugin de facturation peut déjà être déclaré), 7 imports de configuration, 7 imports de routes, 4 jeux de migrations et 2 tâches planifiées ou ponctuelles (purge, assets).
 
 ### Bundles
 
@@ -100,13 +100,29 @@ bin/console doctrine:migrations:migrate
 - aucun plugin exclu des packs n'apparaît dans `composer.json` ni dans un README ;
 - avec `--lock`, après une résolution Composer, aucun plugin verrouillé ne requiert un plugin absent du pack (l'échec nomme la dépendance).
 
+`bin/check-gestures` vérifie que les plugins de `etc/gestures.json` sont exactement les membres, et que chaque bundle et chaque ressource de configuration ou de routes de ce fichier figure dans les deux README, sans autre.
+
 ```bash
 php tests/run.php                  # tests du vérificateur
 bin/check-composition              # composition de composer.json et des README
 bin/check-composition --lock=composer.lock
 ```
 
-L'intégration continue résout aussi le pack dans un projet jetable (`composer update --no-install`) avec Sylius 2.2 et 2.3.
+L'intégration continue résout aussi le pack dans un projet jetable (`composer update --no-install`) avec Sylius 2.2 et 2.3, et l'installe (voir ci-dessous).
+
+## Vérifié en CI
+
+Les gestes ci-dessus ne sont pas seulement décrits : ils sont appliqués par `bin/apply-gestures` à partir de `etc/gestures.json`, et `bin/check-gestures` échoue quand l'un des deux README décrit d'autres gestes que ce fichier.
+
+Le job `install` crée un projet `sylius/sylius-standard` vierge (2.2.4 avec Sylius `~2.2.9`, et 2.3.0 avec Sylius `~2.3.0`), ajoute ce dépôt comme dépôt Composer de type `path` (le pack n'est pas republié pour l'essai), le requiert, applique les gestes, lance les migrations, puis `lint:container` et `doctrine:schema:validate`. Un échec nomme le plugin et l'étape : `FAIL plugin=… step=…` (`bin/step`). Le job `install` du [pack IA et headless](https://github.com/thibmonier/sylius-pack-ai-headless) installe aussi les deux packs dans le même projet et compile le conteneur (aucun conflit de service ni de route).
+
+```bash
+php tests/gestures.php             # tests des gestes, de leur contrôle contre les README et de l'enveloppe d'étape
+bin/check-gestures                 # etc/gestures.json contre les deux README
+bin/apply-gestures --project=DIR   # applique les gestes à un projet Symfony
+```
+
+Ce que le job ne couvre pas : la colonne « Autre » du tableau (réglages Factur-X, tâches planifiées, assets), le moteur PDF du plugin de facturation, PHP 8.2 (Sylius-Standard exige PHP 8.3, donc le job tourne sur PHP 8.3 alors que les plugins du pack acceptent PHP 8.2) et Sylius 2.2 avant 2.2.9.
 
 ## Maintenance
 

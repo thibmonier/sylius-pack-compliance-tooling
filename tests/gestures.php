@@ -247,11 +247,11 @@ $test('a command that fails keeps its exit code and the failure names the plugin
     return [3 === $code && str_contains($errors, 'FAIL plugin=tmonier/sylius-x-plugin step=migrations'), $errors];
 });
 
-$test('with --plugin=auto the failure names the plugin found in the output of the command', static function () use ($step): array {
-    $command = 'fwrite(STDERR, "Root composer.json requires tmonier/sylius-gpsr-plugin ^99.0 -> no matching package\n"); exit(2);';
+$test('with --plugin=auto the failure names the plugin found in the output of the command', static function () use ($step, $first): array {
+    $command = 'fwrite(STDERR, "Root composer.json requires ' . $first['plugin'] . ' ^99.0 -> no matching package\n"); exit(2);';
     [$code, , $errors] = run($step, ['--plugin=auto', '--step=composer-require', '--', PHP_BINARY, '-r', $command]);
 
-    return [2 === $code && str_contains($errors, 'FAIL plugin=tmonier/sylius-gpsr-plugin step=composer-require'), $errors];
+    return [2 === $code && str_contains($errors, 'FAIL plugin=' . $first['plugin'] . ' step=composer-require'), $errors];
 });
 
 $test('with --plugin=auto and no plugin in the output the failure names the pack', static function () use ($step, $root): array {
@@ -262,10 +262,11 @@ $test('with --plugin=auto and no plugin in the output the failure names the pack
 });
 
 $test('with --plugin=auto a bundle namespace in the output is mapped to its plugin', static function () use ($step, $root, $first): array {
-    if ([] === $first['bundles']) {
+    $bundles = array_values(array_filter($first['bundles'], static fn (string $class): bool => str_starts_with($class, 'Tmonier\\')));
+    if ([] === $bundles) {
         return [false, 'no bundle'];
     }
-    $namespace = substr($first['bundles'][0], 0, (int) strrpos($first['bundles'][0], '\\'));
+    $namespace = substr($bundles[0], 0, (int) strrpos($bundles[0], '\\'));
     $command = 'fwrite(STDERR, ' . var_export('In ' . $namespace . '\\Foo.php line 4: boom', true) . '); exit(1);';
     [$code, , $errors] = run($step, ['--plugin=auto', '--step=lint-container', '--root=' . $root, '--', PHP_BINARY, '-r', $command]);
 

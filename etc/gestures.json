@@ -1,0 +1,130 @@
+{
+    "pack": "tmonier/sylius-pack-compliance-tooling",
+    "migrations": "doctrine:migrations:migrate",
+    "plugins": [
+        {
+            "plugin": "tmonier/sylius-facturx-plugin",
+            "bundles": [
+                "Sylius\\InvoicingPlugin\\SyliusInvoicingPlugin",
+                "Tmonier\\SyliusFacturXPlugin\\TmonierSyliusFacturXPlugin"
+            ],
+            "configuration": [
+                {
+                    "file": "sylius_invoicing",
+                    "resource": "@SyliusInvoicingPlugin/config/config.yaml"
+                },
+                {
+                    "file": "tmonier_sylius_facturx",
+                    "resource": "@TmonierSyliusFacturXPlugin/config/config.yaml"
+                }
+            ],
+            "routes": [
+                {
+                    "file": "sylius_invoicing",
+                    "name": "sylius_invoicing",
+                    "resource": "@SyliusInvoicingPlugin/config/routes.yaml"
+                },
+                {
+                    "file": "tmonier_sylius_facturx",
+                    "name": "tmonier_sylius_facturx",
+                    "resource": "@TmonierSyliusFacturXPlugin/config/routes.yaml"
+                }
+            ]
+        },
+        {
+            "plugin": "tmonier/sylius-gpsr-plugin",
+            "bundles": [
+                "Tmonier\\SyliusGpsrPlugin\\TmonierSyliusGpsrPlugin"
+            ],
+            "configuration": [
+                {
+                    "file": "tmonier_sylius_gpsr",
+                    "resource": "@TmonierSyliusGpsrPlugin/config/config.yaml"
+                }
+            ],
+            "routes": [
+                {
+                    "file": "tmonier_sylius_gpsr",
+                    "name": "tmonier_sylius_gpsr",
+                    "resource": "@TmonierSyliusGpsrPlugin/config/routes.yaml"
+                }
+            ]
+        },
+        {
+            "plugin": "tmonier/sylius-audit-log-plugin",
+            "bundles": [
+                "Tmonier\\SyliusAuditLogPlugin\\TmonierSyliusAuditLogPlugin"
+            ],
+            "configuration": [
+                {
+                    "file": "tmonier_sylius_audit_log",
+                    "resource": "@TmonierSyliusAuditLogPlugin/config/config.yaml"
+                }
+            ],
+            "routes": [
+                {
+                    "file": "tmonier_sylius_audit_log",
+                    "name": "tmonier_sylius_audit_log",
+                    "resource": "@TmonierSyliusAuditLogPlugin/config/routes.yaml"
+                }
+            ]
+        },
+        {
+            "plugin": "tmonier/sylius-timeline-plugin",
+            "bundles": [
+                "Tmonier\\SyliusTimelinePlugin\\TmonierSyliusTimelinePlugin"
+            ],
+            "configuration": [
+                {
+                    "file": "tmonier_sylius_timeline",
+                    "resource": "@TmonierSyliusTimelinePlugin/config/config.yaml"
+                }
+            ],
+            "routes": [
+                {
+                    "file": "tmonier_sylius_timeline",
+                    "name": "tmonier_sylius_timeline",
+                    "resource": "@TmonierSyliusTimelinePlugin/config/routes.yaml"
+                }
+            ]
+        },
+        {
+            "plugin": "tmonier/sylius-command-palette-plugin",
+            "bundles": [
+                "Tmonier\\SyliusCommandPalettePlugin\\TmonierSyliusCommandPalettePlugin"
+            ],
+            "configuration": [
+                {
+                    "file": "tmonier_sylius_command_palette",
+                    "resource": "@TmonierSyliusCommandPalettePlugin/config/config.yaml"
+                }
+            ],
+            "routes": [
+                {
+                    "file": "tmonier_sylius_command_palette",
+                    "name": "tmonier_sylius_command_palette",
+                    "resource": "@TmonierSyliusCommandPalettePlugin/config/routes.yaml"
+                }
+            ]
+        },
+        {
+            "plugin": "tmonier/sylius-bulk-actions-plugin",
+            "bundles": [
+                "Tmonier\\SyliusBulkActionsPlugin\\TmonierSyliusBulkActionsPlugin"
+            ],
+            "configuration": [
+                {
+                    "file": "tmonier_sylius_bulk_actions",
+                    "resource": "@TmonierSyliusBulkActionsPlugin/config/config.yaml"
+                }
+            ],
+            "routes": [
+                {
+                    "file": "tmonier_sylius_bulk_actions",
+                    "name": "tmonier_sylius_bulk_actions",
+                    "resource": "@TmonierSyliusBulkActionsPlugin/config/routes.yaml"
+                }
+            ]
+        }
+    ]
+}

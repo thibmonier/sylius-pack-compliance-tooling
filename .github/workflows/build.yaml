@@ -35,8 +35,14 @@ jobs:
             - name: Test the composition checker
               run: php tests/run.php
 
+            - name: Test the gestures, their README check and the step wrapper
+              run: php tests/gestures.php
+
             - name: Check the composition
               run: bin/check-composition
+
+            - name: Check the gestures against both READMEs
+              run: bin/check-gestures
 
             - name: Check that every action is pinned
               run: bin/check-pinned-refs
@@ -77,3 +83,72 @@ jobs:
 
             - name: Check the locked plugins against the composition
               run: bin/check-composition --lock="$RUNNER_TEMP/project/composer.lock"
+
+    install:
+        runs-on: ubuntu-latest
+        name: "Installation in Sylius-Standard ${{ matrix.standard }}"
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - standard: "2.2.4"
+                      sylius: "~2.2.9"
+                    - standard: "2.3.0"
+                      sylius: "~2.3.0"
+        env:
+            APP_ENV: dev
+            DATABASE_URL: "mysql://root:root@127.0.0.1:3306/sylius?serverVersion=8.0&charset=utf8mb4"
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  path: pack
+
+            - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2.40.0
+              with:
+                  # Sylius-Standard requires PHP 8.3 (the plugins of the pack accept 8.2: written in the README)
+                  php-version: "8.3"
+                  extensions: intl, pdo_mysql, gd, zip, mbstring
+                  ini-values: memory_limit=-1
+                  tools: composer:v2
+
+            - name: Start MySQL
+              run: sudo systemctl start mysql.service
+
+            - name: Create the blank Sylius project
+              env:
+                  STANDARD: ${{ matrix.standard }}
+              run: |
+                  "$GITHUB_WORKSPACE/pack/bin/step" --plugin=sylius/sylius-standard --step=create-project -- \
+                      composer create-project "sylius/sylius-standard:$STANDARD" "$RUNNER_TEMP/project" --no-interaction --no-scripts
+
+            - name: Require the pack (a path repository, the pack is not republished for the test)
+              env:
+                  SYLIUS: ${{ matrix.sylius }}
+              run: |
+                  cd "$RUNNER_TEMP/project"
+                  PACK=$(php -r 'echo json_decode(file_get_contents(getenv("GITHUB_WORKSPACE") . "/pack/composer.json"), true)["name"];')
+                  composer config repositories.pack --json "{\"type\": \"path\", \"url\": \"$GITHUB_WORKSPACE/pack\", \"options\": {\"symlink\": false}}"
+                  "$GITHUB_WORKSPACE/pack/bin/step" --plugin=auto --step=composer-require -- \
+                      composer require "sylius/sylius:$SYLIUS" "$PACK:*@dev" --update-with-all-dependencies --no-scripts --no-interaction
+
+            - name: Apply the gestures of the README
+              run: |
+                  cd "$RUNNER_TEMP/project"
+                  php "$GITHUB_WORKSPACE/pack/bin/apply-gestures" --project=. --gestures="$GITHUB_WORKSPACE/pack/etc/gestures.json"
+
+            - name: Create the database and run the migrations
+              run: |
+                  cd "$RUNNER_TEMP/project"
+                  STEP="$GITHUB_WORKSPACE/pack/bin/step"
+                  "$STEP" --plugin=auto --step=database-create -- bin/console doctrine:database:create --if-not-exists
+                  "$STEP" --plugin=auto --step=migrations -- bin/console doctrine:migrations:migrate --no-interaction
+
+            - name: Lint the container
+              run: |
+                  cd "$RUNNER_TEMP/project"
+                  "$GITHUB_WORKSPACE/pack/bin/step" --plugin=auto --step=lint-container -- bin/console lint:container
+
+            - name: Validate the Doctrine schema
+              run: |
+                  cd "$RUNNER_TEMP/project"
+                  "$GITHUB_WORKSPACE/pack/bin/step" --plugin=auto --step=schema-validate -- bin/console doctrine:schema:validate
