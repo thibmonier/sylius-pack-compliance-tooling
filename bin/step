@@ -4,7 +4,7 @@
 // Runs one step of the installation in CI and, when it fails, says which plugin and which step: the last line on stderr is
 // "FAIL plugin=<name> step=<step>" (plus a GitHub Actions annotation) and the exit code of the command is kept.
 // With --plugin=auto the plugin is the first member of the pack named in the output of the command (a package name, or
-// the namespace of one of its bundles); when none is named, it is the pack itself.
+// the namespace of one of its bundles, or the alias of its services); when none is named, it is the pack itself.
 //
 //   bin/step --plugin=<name|auto> --step=<step> [--root=DIR] -- command [arguments...]
 
@@ -82,6 +82,13 @@ function guessPlugin(string $output, string $root): string
             if (in_array($name, $members, true)) {
                 return $name;
             }
+        }
+    }
+    // Services, parameters and configuration aliases carry the slug of the plugin: tmonier_b2b_mcp_..., tmonier_sylius_b2b_mcp.
+    foreach ($members as $member) {
+        $slug = str_replace('-', '_', substr($member, strlen('tmonier/sylius-'), -strlen('-plugin')));
+        if (str_contains($output, 'tmonier_' . $slug) || str_contains($output, 'tmonier_sylius_' . $slug)) {
+            return $member;
         }
     }
     $normalized = str_replace('\\\\', '\\', $output);
