@@ -134,6 +134,16 @@ jobs:
                   "$GITHUB_WORKSPACE/pack/bin/step" --plugin=auto --step=composer-require -- \
                       composer require "sylius/sylius:$SYLIUS" "$PACK:*@dev" $PACKAGES --no-scripts --no-interaction
 
+            - name: Drop a bundle that the skeleton declares and Sylius no longer installs
+              run: |
+                  # Sylius-Standard 2.2.4 lists FOSRestBundle in config/bundles.php, Sylius 2.2.12 does not install it
+                  cd "$RUNNER_TEMP/project"
+                  if [ ! -d vendor/friendsofsymfony/rest-bundle ] && grep -q 'FOS.RestBundle' config/bundles.php; then
+                      echo "FOSRestBundle is declared by the skeleton but not installed: removed from config/bundles.php"
+                      grep -v 'FOS.RestBundle' config/bundles.php > config/bundles.php.new
+                      mv config/bundles.php.new config/bundles.php
+                  fi
+
             - name: Apply the gestures of the README
               run: |
                   cd "$RUNNER_TEMP/project"
@@ -155,3 +165,9 @@ jobs:
               run: |
                   cd "$RUNNER_TEMP/project"
                   "$GITHUB_WORKSPACE/pack/bin/step" --plugin=auto --step=schema-validate -- bin/console doctrine:schema:validate
+
+            - name: Show the schema differences
+              if: failure()
+              run: |
+                  cd "$RUNNER_TEMP/project"
+                  bin/console doctrine:schema:update --dump-sql || true
