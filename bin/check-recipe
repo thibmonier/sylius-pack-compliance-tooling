@@ -1,0 +1,130 @@
+#!/usr/bin/env php
+<?php
+
+// Checks the Symfony Flex recipe of the pack (recipe/<vendor>/<package>/<version>/, the layout of symfony/recipes-contrib)
+// against etc/gestures.json, the single source: the manifest registers exactly the bundles of the gestures file (never
+// the ones that the recipe of another package provides), copies config/ into the configuration directory, and the files of
+// config/ are exactly the ones bin/apply-gestures writes, with the same content.
+// Exit code 1 and one line per problem on stderr.
+//
+//   bin/check-recipe [--root=DIR]
+
+declare(strict_types=1);
+
+/** @return array<string, mixed> */
+function readJson(string $path): array
+{
+    $content = is_file($path) ? file_get_contents($path) : false;
+    if (false === $content) {
+        fwrite(STDERR, "KO cannot read {$path}\n");
+        exit(1);
+    }
+
+    return json_decode($content, true, 512, JSON_THROW_ON_ERROR);
+}
+
+/** @return array<string, string> relative path => content, for the files under $directory/$prefix */
+function filesUnder(string $directory, string $prefix): array
+{
+    $files = [];
+    $base = $directory . '/' . $prefix;
+    if (!is_dir($base)) {
+        return $files;
+    }
+    $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($base, FilesystemIterator::SKIP_DOTS));
+    foreach ($iterator as $file) {
+        if ($file->isFile()) {
+            $files[$prefix . '/' . substr($file->getPathname(), strlen($base) + 1)] = (string) file_get_contents($file->getPathname());
+        }
+    }
+    ksort($files);
+
+    return $files;
+}
+
+function removeTree(string $directory): void
+{
+    foreach (scandir($directory) ?: [] as $entry) {
+        if ('.' === $entry || '..' === $entry) {
+            continue;
+        }
+        is_dir($directory . '/' . $entry) ? removeTree($directory . '/' . $entry) : unlink($directory . '/' . $entry);
+    }
+    rmdir($directory);
+}
+
+/** The files that bin/apply-gestures writes into an empty project: the content the recipe must have. */
+function generatedFiles(string $root): array
+{
+    $project = sys_get_temp_dir() . '/check-recipe-' . bin2hex(random_bytes(6));
+    mkdir($project . '/config/packages', 0777, true);
+    mkdir($project . '/config/routes', 0777, true);
+    file_put_contents($project . '/config/bundles.php', "<?php\n\nreturn [\n];\n");
+
+    $process = proc_open([PHP_BINARY, __DIR__ . '/apply-gestures', '--project=' . $project, '--gestures=' . $root . '/etc/gestures.json'], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+    stream_get_contents($pipes[1]);
+    $errors = (string) stream_get_contents($pipes[2]);
+    $code = proc_close($process);
+    $files = array_merge(filesUnder($project, 'config/packages'), filesUnder($project, 'config/routes'));
+    removeTree($project);
+    if (0 !== $code) {
+        fwrite(STDERR, "KO bin/apply-gestures failed: {$errors}");
+        exit(1);
+    }
+
+    return $files;
+}
+
+$options = getopt('', ['root::']);
+$root = rtrim((string) ($options['root'] ?? dirname(__DIR__)), '/');
+$gestures = readJson($root . '/etc/gestures.json');
+$pack = $gestures['pack'];
+
+$versions = glob($root . '/recipe/' . $pack . '/*', GLOB_ONLYDIR) ?: [];
+if (1 !== count($versions)) {
+    fwrite(STDERR, "KO recipe/{$pack}: expected exactly one version directory, found " . count($versions) . "\n");
+    exit(1);
+}
+$recipe = $versions[0];
+$manifest = readJson($recipe . '/manifest.json');
+$problems = [];
+
+$expectedBundles = [];
+foreach ($gestures['plugins'] as $plugin) {
+    array_push($expectedBundles, ...$plugin['bundles']);
+}
+$manifestBundles = array_keys($manifest['bundles'] ?? []);
+foreach (array_diff($expectedBundles, $manifestBundles) as $missing) {
+    $problems[] = "manifest.json: bundle {$missing} of etc/gestures.json is not registered";
+}
+foreach (array_diff($manifestBundles, $expectedBundles) as $extra) {
+    $problems[] = "manifest.json: bundle {$extra} is not in etc/gestures.json (a bundle provided by the recipe of another package does not belong here)";
+}
+foreach ($manifest['bundles'] ?? [] as $bundle => $environments) {
+    if (['all'] !== $environments) {
+        $problems[] = "manifest.json: bundle {$bundle} must be registered for [\"all\"]";
+    }
+}
+if (['config/' => '%CONFIG_DIR%/'] !== ($manifest['copy-from-recipe'] ?? null)) {
+    $problems[] = 'manifest.json: copy-from-recipe must be {"config/": "%CONFIG_DIR%/"}';
+}
+
+$expected = generatedFiles($root);
+$found = filesUnder($recipe, 'config');
+foreach (array_diff_key($expected, $found) as $path => $content) {
+    $problems[] = "recipe: {$path} is written by bin/apply-gestures and missing from the recipe";
+}
+foreach (array_diff_key($found, $expected) as $path => $content) {
+    $problems[] = "recipe: {$path} is in the recipe and not written by bin/apply-gestures";
+}
+foreach (array_intersect_key($found, $expected) as $path => $content) {
+    if ($content !== $expected[$path]) {
+        $problems[] = "recipe: {$path} differs from what bin/apply-gestures writes";
+    }
+}
+
+foreach ($problems as $problem) {
+    fwrite(STDERR, 'KO ' . $problem . "\n");
+}
+echo [] === $problems ? sprintf("OK %s %s: %d bundles, %d files, same as etc/gestures.json\n", $pack, basename($recipe), count($manifestBundles), count($found)) : '';
+exit([] === $problems ? 0 : 1);

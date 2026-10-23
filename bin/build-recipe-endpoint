@@ -1,0 +1,66 @@
+#!/usr/bin/env php
+<?php
+
+// Builds, from recipe/<vendor>/<package>/<version>/, the files that Symfony Flex reads from a recipe endpoint
+// (index.json and <vendor>.<package>.<version>.json). Serve the output directory over HTTP and add the URL of index.json to
+// "extra.symfony.endpoint" in the composer.json of a project (with "config.secure-http": false for a local http URL):
+// Flex then applies the recipe when the pack is installed and removes what it added when the pack is removed. This is what
+// the continuous integration and bin/flex-trial do before the recipe is published on symfony/recipes-contrib.
+//
+//   bin/build-recipe-endpoint --out=DIR [--root=DIR] [--url=http://127.0.0.1:8765]
+
+declare(strict_types=1);
+
+$options = getopt('', ['root::', 'out:', 'url::']);
+$root = rtrim((string) ($options['root'] ?? dirname(__DIR__)), '/');
+$out = rtrim((string) ($options['out'] ?? ''), '/');
+$url = rtrim((string) ($options['url'] ?? 'http://127.0.0.1:8765'), '/');
+if ('' === $out) {
+    fwrite(STDERR, "usage: bin/build-recipe-endpoint --out=DIR [--root=DIR] [--url=URL]\n");
+    exit(2);
+}
+
+$pack = json_decode((string) file_get_contents($root . '/etc/gestures.json'), true, 512, JSON_THROW_ON_ERROR)['pack'];
+$versions = glob($root . '/recipe/' . $pack . '/*', GLOB_ONLYDIR) ?: [];
+if (1 !== count($versions)) {
+    fwrite(STDERR, "KO recipe/{$pack}: expected exactly one version directory\n");
+    exit(1);
+}
+$directory = $versions[0];
+$version = basename($directory);
+$manifest = json_decode((string) file_get_contents($directory . '/manifest.json'), true, 512, JSON_THROW_ON_ERROR);
+
+$files = [];
+$base = $directory . '/config';
+$iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($base, FilesystemIterator::SKIP_DOTS));
+foreach ($iterator as $file) {
+    if ($file->isFile()) {
+        $files['config/' . substr($file->getPathname(), strlen($base) + 1)] = ['contents' => explode("\n", (string) file_get_contents($file->getPathname())), 'executable' => false];
+    }
+}
+ksort($files);
+
+$entry = ['manifest' => $manifest, 'files' => $files];
+$entry['ref'] = sha1(json_encode($entry, JSON_THROW_ON_ERROR));
+
+$index = [
+    'aliases' => new stdClass(),
+    'recipes' => [$pack => [$version]],
+    'recipe-conflicts' => new stdClass(),
+    'versions' => [],
+    'branch' => 'main',
+    'is_contrib' => true,
+    '_links' => [
+        'repository' => 'local/recipes',
+        'origin_template' => '{package}:{version}@local/recipes:main',
+        'recipe_template' => $url . '/{package_dotted}.{version}.json',
+        'recipe_template_relative' => '{package_dotted}.{version}.json',
+        'archived_recipes_template' => $url . '/archived/{package_dotted}/{ref}.json',
+        'archived_recipes_template_relative' => 'archived/{package_dotted}/{ref}.json',
+    ],
+];
+
+is_dir($out) || mkdir($out, 0777, true);
+file_put_contents($out . '/index.json', json_encode($index, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
+file_put_contents($out . '/' . str_replace('/', '.', $pack) . '.' . $version . '.json', json_encode(['manifests' => [$pack => $entry]], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
+echo sprintf("OK %s %s: %d files, endpoint written to %s\n", $pack, $version, count($files), $out);
