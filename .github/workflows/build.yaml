@@ -134,7 +134,7 @@ jobs:
                   "$GITHUB_WORKSPACE/pack/bin/step" --plugin=auto --step=composer-require -- \
                       composer require "sylius/sylius:$SYLIUS" "$PACK:*@dev" $PACKAGES --no-scripts --no-interaction
 
-            - name: Drop a bundle that the skeleton declares and Sylius no longer installs
+            - name: Drop a bundle and its configuration that the skeleton declares and Sylius no longer installs
               run: |
                   # Sylius-Standard 2.2.4 lists FOSRestBundle in config/bundles.php, Sylius 2.2.12 does not install it
                   cd "$RUNNER_TEMP/project"
@@ -142,6 +142,7 @@ jobs:
                       echo "FOSRestBundle is declared by the skeleton but not installed: removed from config/bundles.php"
                       grep -v 'FOS.RestBundle' config/bundles.php > config/bundles.php.new
                       mv config/bundles.php.new config/bundles.php
+                      rm -f config/packages/fos_rest.yaml
                   fi
 
             - name: Apply the gestures of the README
@@ -156,15 +157,29 @@ jobs:
                   "$STEP" --plugin=auto --step=database-create -- bin/console doctrine:database:create --if-not-exists
                   "$STEP" --plugin=auto --step=migrations -- bin/console doctrine:migrations:migrate --no-interaction
 
+            - name: Check that the migrations created tables of the pack
+              run: |
+                  count=$(mysql -uroot -proot -N -e "SHOW TABLES FROM sylius LIKE 'tmonier%'" | wc -l)
+                  echo "$count tables of the pack"
+                  test "$count" -gt 0
+
             - name: Lint the container
               run: |
                   cd "$RUNNER_TEMP/project"
                   "$GITHUB_WORKSPACE/pack/bin/step" --plugin=auto --step=lint-container -- bin/console lint:container
 
-            - name: Validate the Doctrine schema
+            - name: Validate the Doctrine mapping and the schema of the pack
               run: |
                   cd "$RUNNER_TEMP/project"
-                  "$GITHUB_WORKSPACE/pack/bin/step" --plugin=auto --step=schema-validate -- bin/console doctrine:schema:validate
+                  STEP="$GITHUB_WORKSPACE/pack/bin/step"
+                  "$STEP" --plugin=auto --step=schema-validate -- bin/console doctrine:schema:validate --skip-sync
+                  # The blank Sylius-Standard schema is itself out of sync (tables of the Mollie, refund and messenger
+                  # bundles), so the synchronisation is checked on the tables of the pack and of the Invoicing Plugin.
+                  "$STEP" --plugin=auto --step=schema-sync -- bash -c '
+                      differences=$(bin/console doctrine:schema:update --dump-sql 2>&1) || { echo "$differences"; exit 1; }
+                      if echo "$differences" | grep -Ei "tmonier_|sylius_invoicing"; then exit 1; fi
+                      echo "No difference on the tables of the pack"
+                  '
 
             - name: Show the schema differences
               if: failure()
