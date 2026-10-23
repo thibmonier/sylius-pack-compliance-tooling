@@ -1,0 +1,68 @@
+#!/usr/bin/env php
+<?php
+
+// Looks for route conflicts in the output of "bin/console debug:router --format=json" of a project that has both packs:
+// two routes with the same host, the same path and an overlapping method (ANY overlaps every method) are reported when
+// at least one of them belongs to a plugin (name starting with one of the prefixes). Routes of the application itself
+// are not reported. Exit code 1 and one line per conflict on stderr.
+//
+//   bin/check-routes --file=routes.json [--prefixes=tmonier_,sylius_invoicing_]
+
+declare(strict_types=1);
+
+$options = getopt('', ['file:', 'prefixes::']);
+$content = isset($options['file']) && is_file((string) $options['file']) ? file_get_contents((string) $options['file']) : false;
+if (false === $content) {
+    fwrite(STDERR, "usage: bin/check-routes --file=routes.json [--prefixes=a_,b_]\n");
+    exit(2);
+}
+$routes = json_decode($content, true, 512, JSON_THROW_ON_ERROR);
+$prefixes = array_filter(explode(',', (string) ($options['prefixes'] ?? 'tmonier_')));
+
+function belongsToPlugin(string $name, array $prefixes): bool
+{
+    foreach ($prefixes as $prefix) {
+        if (str_starts_with($name, $prefix)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/** @return list<string> */
+function methods(string $method): array
+{
+    return 'ANY' === $method || '' === $method ? ['ANY'] : explode('|', $method);
+}
+
+function overlap(string $first, string $second): bool
+{
+    $a = methods($first);
+    $b = methods($second);
+
+    return in_array('ANY', $a, true) || in_array('ANY', $b, true) || [] !== array_intersect($a, $b);
+}
+
+$byPath = [];
+foreach ($routes as $name => $route) {
+    $byPath[($route['host'] ?? 'ANY') . ' ' . $route['path']][$name] = (string) ($route['method'] ?? 'ANY');
+}
+
+$problems = [];
+foreach ($byPath as $location => $named) {
+    $names = array_keys($named);
+    foreach ($names as $i => $first) {
+        foreach (array_slice($names, $i + 1) as $second) {
+            if (overlap($named[$first], $named[$second]) && (belongsToPlugin((string) $first, $prefixes) || belongsToPlugin((string) $second, $prefixes))) {
+                $problems[] = "routes {$first} and {$second} share {$location}";
+            }
+        }
+    }
+}
+
+foreach ($problems as $problem) {
+    fwrite(STDERR, 'KO ' . $problem . "\n");
+}
+echo [] === $problems ? sprintf("OK %d routes, no conflict\n", count($routes)) : '';
+exit([] === $problems ? 0 : 1);
