@@ -421,6 +421,18 @@ $test('two routes of the application itself on the same path are not reported', 
     return [0 === $code, $errors];
 });
 
+$test('with --plugin=auto the name of a bundle in a resource path is mapped to its plugin', static function () use ($step, $root, $first): array {
+    $bundles = array_values(array_filter($first['bundles'], static fn (string $class): bool => str_starts_with($class, 'Tmonier\\')));
+    if ([] === $bundles) {
+        return [false, 'no bundle'];
+    }
+    $alias = substr($bundles[0], (int) strrpos($bundles[0], '\\') + 1);
+    $command = 'fwrite(STDERR, ' . var_export('File not found: "@' . $alias . '/config/routesX.yaml" (which is being imported from "routes/x.yaml")', true) . '); exit(1);';
+    [$code, , $errors] = run($step, ['--plugin=auto', '--step=debug-router', '--root=' . $root, '--', PHP_BINARY, '-r', $command]);
+
+    return [1 === $code && str_contains($errors, 'FAIL plugin=' . $first['plugin'] . ' step=debug-router'), $errors];
+});
+
 foreach ($temporaryDirectories as $directory) {
     is_dir($directory) && removeTree($directory);
 }
