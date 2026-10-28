@@ -21,5 +21,23 @@
         "tmonier/sylius-facturx-plugin": "^1.1",
         "tmonier/sylius-gpsr-plugin": "^1.0",
         "tmonier/sylius-timeline-plugin": "^1.0"
+    },
+    "config": {
+        "allow-plugins": {},
+        "policy": {
+            "advisories": {
+                "block": true,
+                "audit": "fail"
+            },
+            "abandoned": {
+                "block": false,
+                "audit": "report"
+            },
+            "malware": {
+                "block": true,
+                "block-scope": "all",
+                "audit": "fail"
+            }
+        }
     }
 }
