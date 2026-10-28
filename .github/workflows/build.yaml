@@ -14,15 +14,18 @@ concurrency:
     group: ${{ github.workflow }}-${{ github.ref }}
     cancel-in-progress: true
 
-permissions:
-    contents: read
+permissions: {}
 
 jobs:
     checks:
         runs-on: ubuntu-latest
+        permissions:
+            contents: read
         name: "Composition checks"
         steps:
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
 
             - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2.40.0
               with:
@@ -55,9 +58,13 @@ jobs:
 
     flex-trial:
         runs-on: ubuntu-latest
+        permissions:
+            contents: read
         name: "Flex trial in a throwaway project"
         steps:
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
 
             - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2.40.0
               with:
@@ -69,6 +76,8 @@ jobs:
 
     resolve:
         runs-on: ubuntu-latest
+        permissions:
+            contents: read
         name: "Resolution with Sylius ${{ matrix.sylius }}"
         strategy:
             fail-fast: false
@@ -76,6 +85,8 @@ jobs:
                 sylius: ["~2.2.9", "~2.3.0"]
         steps:
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
 
             - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2.40.0
               with:
@@ -104,8 +115,14 @@ jobs:
             - name: Check the locked plugins against the composition
               run: bin/check-composition --lock="$RUNNER_TEMP/project/composer.lock"
 
+        -
+            name: Audit of the resolved PHP dependencies
+            run: cd "$RUNNER_TEMP/project" && composer audit --abandoned=report
+
     install:
         runs-on: ubuntu-latest
+        permissions:
+            contents: read
         name: "Installation in Sylius-Standard ${{ matrix.standard }}"
         strategy:
             fail-fast: false
@@ -121,6 +138,7 @@ jobs:
         steps:
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
               with:
+                  persist-credentials: false
                   path: pack
 
             - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2.40.0
@@ -219,6 +237,8 @@ jobs:
 
     recipe:
         runs-on: ubuntu-latest
+        permissions:
+            contents: read
         name: "Flex recipe in Sylius-Standard ${{ matrix.standard }}"
         strategy:
             fail-fast: false
@@ -234,6 +254,7 @@ jobs:
         steps:
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
               with:
+                  persist-credentials: false
                   path: pack
 
             - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2.40.0
@@ -335,3 +356,20 @@ jobs:
               run: |
                   cd "$RUNNER_TEMP/project"
                   bin/console doctrine:schema:update --dump-sql || true
+
+    # Static audit of the workflows themselves (US-209). Version and image are pinned, no network.
+    zizmor:
+        name: Workflow audit (zizmor)
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+        timeout-minutes: 10
+        env:
+            ZIZMOR_IMAGE: ghcr.io/zizmorcore/zizmor:1.31.1@sha256:42d409dbb851d4c5d35a058cf042b828bea1e3f2884378c526eb0974780e18d9
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+
+            - name: zizmor (offline)
+              run: docker run --rm -v "$PWD:/work" -w /work "$ZIZMOR_IMAGE" --offline .github
