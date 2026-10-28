@@ -112,12 +112,11 @@ jobs:
                   cd "$RUNNER_TEMP/project"
                   composer update --no-install --no-scripts --no-plugins --no-interaction
 
+            - name: Audit of the resolved PHP dependencies
+              run: cd "$RUNNER_TEMP/project" && composer audit --locked --abandoned=report
+
             - name: Check the locked plugins against the composition
               run: bin/check-composition --lock="$RUNNER_TEMP/project/composer.lock"
-
-        -
-            name: Audit of the resolved PHP dependencies
-            run: cd "$RUNNER_TEMP/project" && composer audit --abandoned=report
 
     install:
         runs-on: ubuntu-latest
